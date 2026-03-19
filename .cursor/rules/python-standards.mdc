@@ -1,0 +1,54 @@
+---
+description: Python coding standards for this user. Keep files small, code simple, with clear logging, error handling, and type hints.
+alwaysApply: true
+---
+
+# Python 编码规范（全局生效）
+
+## 语言与实现
+
+- 所有业务逻辑使用 Python 实现。
+- 代码力求简洁，避免冗余和过度抽象。
+
+## 文件与模块拆分
+
+- 单个 Python 文件不超过 150 行，超出时拆分为独立子模块。
+- 按职责划分模块：模型（models）、业务逻辑、IO/外部调用、工具函数等。
+- 公共工具函数提取到 `utils/` 目录或同级 `helpers.py`，避免重复实现。
+
+## 注释规范
+
+- 函数 / 类添加简要 docstring，说明用途和关键参数。
+- 复杂逻辑、非显而易见的业务规则处加行内注释。
+- 禁止“翻译代码”式注释（如仅写 `# 返回结果`）。
+
+## 日志规范
+
+- 使用 `logging` 模块；每个文件顶部包含：
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+```
+
+- 关键操作入口使用 `logger.info`。
+- 异常相关使用 `logger.error` 或 `logger.warning`。
+- 日志应包含有用的上下文信息（模块名、关键参数值等）。
+
+## 错误处理
+
+- 业务异常定义专用 `Exception` 子类，放在对应模块顶部。
+- 捕获异常时先记录日志再抛出或处理，禁止空 `except`。
+
+## 代码复用与配置
+
+- 相似逻辑在 2 处及以上出现时，提取为公共函数。
+- 配置与常量集中管理，不硬编码在业务逻辑中。
+- 外部工具调用（如 `subprocess` 等）封装为独立函数，便于测试和替换。
+
+## 类型提示与数据模型
+
+- 函数签名使用类型标注（`typing` 模块）。
+- 复杂数据结构优先使用 `@dataclass` 或 Pydantic 模型来表达。
+
