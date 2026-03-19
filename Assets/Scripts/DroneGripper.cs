@@ -75,6 +75,12 @@ public class DroneGripper : MonoBehaviour
             }
         }
 
+        // 你不需要运行时自动居中；避免在 Play 中修改 GrabPoint 位置导致抓取点偏差与抖动。
+        // 仅允许在编辑状态（非 Play）且你手动开启时才执行一次。
+#if UNITY_EDITOR
+        if (!Application.isPlaying && autoRecenterGrabPoint)
+            RecenterGrabPoint();
+#endif
     }
 
     Animator GetAnimator()
@@ -82,6 +88,30 @@ public class DroneGripper : MonoBehaviour
         if (clawAnimator != null) return clawAnimator;
         clawAnimator = GetComponentInChildren<Animator>();
         return clawAnimator;
+    }
+
+    bool HasTriggerParameter(Animator anim, string parameterName)
+    {
+        if (anim == null) return false;
+        if (string.IsNullOrEmpty(parameterName)) return false;
+
+        // Animator.parameters 在运行时可遍历并判断类型
+        // 目的：避免对不存在的参数调用 SetTrigger 导致报错刷屏。
+        var ps = anim.parameters;
+        for (int i = 0; i < ps.Length; i++)
+        {
+            var p = ps[i];
+            if (p == null) continue;
+            if (p.type == AnimatorControllerParameterType.Trigger && p.name == parameterName)
+                return true;
+        }
+        return false;
+    }
+
+    void TrySetTrigger(Animator anim, string parameterName)
+    {
+        if (HasTriggerParameter(anim, parameterName))
+            anim.SetTrigger(parameterName);
     }
 
     void Update()
@@ -116,7 +146,7 @@ public class DroneGripper : MonoBehaviour
 
         Animator anim = GetAnimator();
         if (anim != null && !string.IsNullOrEmpty(grabTriggerName))
-            anim.SetTrigger(grabTriggerName);
+            TrySetTrigger(anim, grabTriggerName);
 
         _pendingAttach = true;
         _attachAt = Time.time + Mathf.Max(0f, attachDelay);
@@ -175,7 +205,6 @@ public class DroneGripper : MonoBehaviour
         _joint.anchor = boxRb.transform.InverseTransformPoint(attachWorld);
         _joint.connectedAnchor = _droneRb.transform.InverseTransformPoint(attachWorld);
         _joint.massScale = payloadMassScale;
-
     }
 
     Vector3 GetGrabPointCenterWorld()
@@ -249,23 +278,66 @@ public class DroneGripper : MonoBehaviour
             if (count > 0) return sum / count;
         }
 
-        var renderers = rb.GetComponentsInChildren<Renderer>();
-        if (renderers != null && renderers.Length > 0)
+        if (useRenderersBounds)
         {
-            Vector3 sum = Vector3.zero;
-            int count = 0;
-            for (int i = 0; i < renderers.Length; i++)
+            var renderers = rb.GetComponentsInChildren<Renderer>();
+            if (renderers != null && renderers.Length > 0)
             {
-                var r = renderers[i];
-                if (r == null) continue;
-                sum += r.bounds.center;
-                count++;
+                Vector3 sum = Vector3.zero;
+                int count = 0;
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    var r = renderers[i];
+                    if (r == null) continue;
+                    sum += r.bounds.center;
+                    count++;
+                }
+                if (count > 0) return sum / count;
             }
-            if (count > 0) return sum / count;
         }
 
         // 兜底：用当前 Rigidbody 位置
         return rb.position;
+    }
+
+    void RecenterGrabPoint()
+    {
+        if (grabPoint == null) return;
+
+        Vector3 sum = Vector3.zero;
+        int count = 0;
+
+        if (useRenderersBounds)
+        {
+            var renderers = GetComponentsInChildren<Renderer>(includeInactive: true);
+            if (renderers != null)
+            {
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    var r = renderers[i];
+                    if (r == null) continue;
+                    sum += r.bounds.center;
+                    count++;
+                }
+            }
+        }
+        else if (useCollidersBounds)
+        {
+            var cols = GetComponentsInChildren<Collider>(includeInactive: true);
+            if (cols != null)
+            {
+                for (int i = 0; i < cols.Length; i++)
+                {
+                    var c = cols[i];
+                    if (c == null) continue;
+                    sum += c.bounds.center;
+                    count++;
+                }
+            }
+        }
+
+        if (count <= 0) return;
+        grabPoint.position = sum / count;
     }
 
     void BeginRelease()
@@ -273,11 +345,17 @@ public class DroneGripper : MonoBehaviour
         Animator anim = GetAnimator();
         if (anim != null)
         {
-            if (!string.IsNullOrEmpty(releaseTriggerName))
+            // 优先用 releaseTriggerName；不存在时才尝试 fallback。
+            if (!string.IsNullOrEmpty(releaseTriggerName) && HasTriggerParameter(anim, releaseTriggerName))
+            {
                 anim.SetTrigger(releaseTriggerName);
-            // 兼容：Animator 参数可能写成了 Relsase
-            if (!string.IsNullOrEmpty(releaseTriggerFallbackName) && releaseTriggerFallbackName != releaseTriggerName)
-                anim.SetTrigger(releaseTriggerFallbackName);
+            }
+            else
+            {
+                // 兼容：Animator 参数可能写成了 Relsase（或其它你填的 fallback）
+                if (!string.IsNullOrEmpty(releaseTriggerFallbackName) && releaseTriggerFallbackName != releaseTriggerName)
+                    TrySetTrigger(anim, releaseTriggerFallbackName);
+            }
         }
 
         if (_holding == null) return;
@@ -339,4 +417,10 @@ public class DroneGripper : MonoBehaviour
 
     public bool IsHolding => _holding != null;
     public float HoldingMass => _holding != null && _holding.Rigidbody != null ? _holding.Rigidbody.mass : 0f;
+
+    /// <summary>
+    /// GrabPoint 的中心点（用于 PlaneController 计算 FixedJoint 相对质心的偏移）。
+    /// </summary>
+    public Vector3 GrabPointCenterWorld => GetGrabPointCenterWorld();
 }
+

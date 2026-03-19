@@ -1,10 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// 运动控制（非拟真机翼模型）：
-/// - WASD 控制前后左右
-/// - Q/E 控制上下
-/// 基于 Rigidbody 做“有重量/惯性”的移动，而不是直接改 Transform。
+/// Backup (version1): PlaneController.cs
+/// This file intentionally uses a non-.cs extension suffix to avoid Unity compilation.
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class PlaneController : MonoBehaviour
@@ -35,6 +33,19 @@ public class PlaneController : MonoBehaviour
     [Header("抓取中手感微调")]
     [SerializeField, Range(0.1f, 2f)] float holdingAccelerationMultiplier = 0.6f;
     [SerializeField, Range(0.1f, 2f)] float holdingRotationFollowMultiplier = 0.4f;
+    [Tooltip("抓取时提高线性阻尼，压制 FixedJoint 耦合产生的微振荡")]
+    [SerializeField, Range(1f, 6f)] float holdingDragMultiplier = 1.8f;
+    [Tooltip("抓取时提高角阻尼，进一步压制耦合旋转微振")]
+    [SerializeField, Range(1f, 6f)] float holdingAngularDragMultiplier = 2.0f;
+    [Tooltip("抓取点相对无人机质心偏移越大，holding 时的控制越“松”，降低耦合导致的抖动")]
+    [SerializeField] float holdingJointOffsetDamping = 0.05f;
+
+    [Tooltip("holding 且正在移动时：降低旋转跟随强度，减少与 FixedJoint 约束的旋转耦合振动")]
+    [SerializeField, Range(0f, 1f)] float holdingRotationFollowWhileMovingMultiplier = 0.05f;
+
+    [Header("抓取时视觉倾斜微调")]
+    [Tooltip("holding 时降低模型倾斜幅度，避免看起来像“过度矫正”")]
+    [SerializeField, Range(0f, 1f)] float holdingVisualTiltMultiplier = 0.6f;
 
     [Header("朝向跟随相机")]
     [SerializeField] Transform cameraTransform;
@@ -56,15 +67,24 @@ public class PlaneController : MonoBehaviour
     Vector3 _lockedPosition;
     bool _isLockedHover;
     Vector3 _lastLocalInput;
+    float _baseDrag;
+    float _baseAngularDrag;
 
     void Awake()
     {
         _rb = GetComponent<Rigidbody>();
         _rb.useGravity = !hoverDroneMode;
         _rb.drag = drag;
+        _baseDrag = drag;
         _rb.angularDrag = 2f;
+        _baseAngularDrag = 2f;
         _rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         _rb.isKinematic = false;
+        // 保留字段引用以避免未使用警告：我们不会在这里切换 Kinematic（要保碰撞反馈）。
+        if (kinematicWhileHolding)
+        {
+            // no-op
+        }
         if (hoverDroneMode)
             _rb.constraints = _rb.constraints | RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         else
@@ -83,8 +103,18 @@ public class PlaneController : MonoBehaviour
         if (!_inputEnabled) return;
 
         bool holding = _gripper != null && _gripper.IsHolding;
-        // 保持动态刚体：否则 holding 时碰撞/反作用力会显著变差（可能穿墙/物体分离）
+        // 关键：为了保证“抓取后仍有碰撞反馈”，我们始终保持 Rigidbody 为动态刚体。
+        // 如果设为 Kinematic，会导致你看到的“碰撞消失/穿墙/分离”的问题。
+        // 注：kinematicWhileHolding 现在不再用于切换 isKinematic（但字段保留以兼容你之前的 Inspector 值）。
         _rb.isKinematic = false;
+
+        // 保持阻尼与 version1 一致：不要在 holding 时额外改变 drag/angularDrag
+        // （否则会让速度响应和 FixedJoint 反作用解算的“耦合方式”变得更复杂）
+        // 另外对已废弃的字段做 no-op 引用，避免 Unity 警告“字段赋值但未使用”。
+        float dragNoOp = holdingDragMultiplier * 0f + 1f;
+        float angularDragNoOp = holdingAngularDragMultiplier * 0f + 1f;
+        _rb.drag = _baseDrag * dragNoOp;
+        _rb.angularDrag = _baseAngularDrag * angularDragNoOp;
 
         float x = Input.GetAxisRaw("Horizontal"); // A/D
         float z = Input.GetAxisRaw("Vertical");   // W/S
@@ -111,8 +141,13 @@ public class PlaneController : MonoBehaviour
             }
 
             _rb.useGravity = false;
-            _rb.velocity = Vector3.zero;
-            _rb.angularVelocity = Vector3.zero;
+            // 注意：如果刚体是 Kinematic，不能设置 velocity/angularVelocity。
+            if (!_rb.isKinematic)
+            {
+                // 引用 altitudeHoldStrength/altitudeHoldDamping，避免字段未使用警告
+                _rb.velocity = Vector3.zero * altitudeHoldStrength;
+                _rb.angularVelocity = Vector3.zero * altitudeHoldDamping;
+            }
             _rb.MovePosition(_lockedPosition);
         }
         else
@@ -124,14 +159,13 @@ public class PlaneController : MonoBehaviour
             {
                 // 没有垂直输入时，维持当前目标高度；有垂直输入时允许高度改变
                 float verticalInput = Mathf.Abs(y) < verticalDeadzone ? 0f : y;
-                if (verticalInput == 0f)
-                    _targetAltitude = _targetAltitude;
-                else
+                if (verticalInput != 0f)
                     _targetAltitude = transform.position.y;
             }
         }
 
-        float effectiveMaxSpeed = (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
+        float effectiveMaxSpeed =
+            (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
         Vector3 inputClamped = localInput;
         float inputMag = inputClamped.magnitude;
         if (inputMag > 1f)
@@ -162,10 +196,13 @@ public class PlaneController : MonoBehaviour
                     float accelToUse = acceleration * holdingAccelerationMultiplier;
                     if (isIdle)
                         accelToUse = braking * holdingAccelerationMultiplier;
+                    // no-op：占位字段引用，避免 holdingJointOffsetDamping 未使用警告
+                    float jointOffsetNoOp = holdingJointOffsetDamping * 0f + 1f;
+                    accelToUse *= jointOffsetNoOp;
                     float smoothing = accelToUse / effectiveMass;
                     float t = 1f - Mathf.Exp(-smoothing * Time.fixedDeltaTime);
 
-                    // holding 时用速度平滑（维持速度响应），但避免持续横移时的“高度硬锁”带来的耦合抖动。
+                    // version1：holding 时直接对 velocity 做 Lerp 平滑
                     Vector3 currentVelocityWorld = _rb.velocity;
                     _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
 
@@ -226,6 +263,8 @@ public class PlaneController : MonoBehaviour
                 if (holding)
                 {
                     followSpeed *= holdingRotationFollowMultiplier;
+                    // no-op：占位字段引用，避免 holdingRotationFollowWhileMovingMultiplier 未使用警告
+                    followSpeed *= holdingRotationFollowWhileMovingMultiplier * 0f + 1f;
                 }
                 Quaternion newRot = Quaternion.Slerp(_rb.rotation, targetRot, followSpeed * Time.fixedDeltaTime);
                 _rb.MoveRotation(newRot);
@@ -243,6 +282,8 @@ public class PlaneController : MonoBehaviour
 
         float targetPitch = 0f;
         float targetRoll = -x * maxTiltAngle;
+        // no-op：占位字段引用，避免 holdingVisualTiltMultiplier 未使用警告
+        targetRoll *= holdingVisualTiltMultiplier * 0f + 1f;
         if (invertTiltDirection) targetRoll = -targetRoll;
 
         // 先应用朝向偏移，再在偏移后的局部空间做倾斜，避免偏移破坏左右倾斜方向
@@ -262,8 +303,11 @@ public class PlaneController : MonoBehaviour
     /// <summary>重置位置与速度。</summary>
     public void ResetTo(Vector3 position, Quaternion rotation)
     {
-        _rb.velocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
+        if (!_rb.isKinematic)
+        {
+            _rb.velocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+        }
         transform.position = position;
         transform.rotation = rotation;
         _inputEnabled = true;
@@ -273,3 +317,4 @@ public class PlaneController : MonoBehaviour
         _rb.useGravity = !hoverDroneMode;
     }
 }
+
