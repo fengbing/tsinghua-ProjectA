@@ -9,7 +9,7 @@ public class PlaneController : MonoBehaviour
 {
     [Header("移动手感")]
     [SerializeField] float maxSpeed = 16f;
-    [Tooltip("按住 Shift 时的速度倍数")]
+    [Tooltip("按住鼠标右键时的速度倍数")]
     [SerializeField] float boostSpeedMultiplier = 1.8f;
     [SerializeField] float acceleration = 28f;
     [SerializeField] float braking = 52f;
@@ -165,7 +165,7 @@ public class PlaneController : MonoBehaviour
         }
 
         float effectiveMaxSpeed =
-            (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
+            Input.GetMouseButton(1) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
         Vector3 inputClamped = localInput;
         float inputMag = inputClamped.magnitude;
         if (inputMag > 1f)
