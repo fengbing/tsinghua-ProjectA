@@ -1,4 +1,6 @@
+using System.Collections;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class GameUi : MonoBehaviour
 {
@@ -21,6 +23,8 @@ public class GameUi : MonoBehaviour
     [SerializeField] private float distanceThreshold2 = 100f;
     [SerializeField] private float distanceThreshold3 = 150f;
     [SerializeField] private float distanceThreshold4 = 200f;
+    [SerializeField] private Image radialFillImage;
+    [SerializeField] private float showDuration = 0.5f;
 
     private bool isUiVisible = false;
     private int currentPowerLevel = 4;
@@ -28,16 +32,25 @@ public class GameUi : MonoBehaviour
     private bool countdownStarted = false;
     private GameObject[] powerObjects;
     private GameObject[] signalObjects;
+    private bool isFirstPerson = false;
+    private Coroutine showCoroutine;
 
     void Start()
     {
+        isFirstPerson = false;
+
         if (windowUi != null)
         {
             windowUi.SetActive(false);
         }
         if (frontSightUi != null)
         {
-            frontSightUi.SetActive(true);
+            frontSightUi.SetActive(false);
+        }
+        if (radialFillImage != null)
+        {
+            radialFillImage.fillAmount = 0f;
+            radialFillImage.gameObject.SetActive(false);
         }
 
         powerObjects = new GameObject[] { power, power1, power2, power3, power4 };
@@ -49,9 +62,34 @@ public class GameUi : MonoBehaviour
 
     void Update()
     {
+        bool currentFirstPerson = IsFirstPersonMode();
+
         if (Input.GetKeyDown(KeyCode.Escape))
         {
             ToggleUi();
+        }
+
+        if (currentFirstPerson != isFirstPerson)
+        {
+            isFirstPerson = currentFirstPerson;
+            if (isFirstPerson)
+            {
+                if (frontSightUi != null)
+                    frontSightUi.SetActive(true);
+                if (showCoroutine != null)
+                    StopCoroutine(showCoroutine);
+                showCoroutine = StartCoroutine(ShowUiFrame());
+            }
+            else
+            {
+                if (frontSightUi != null)
+                    frontSightUi.SetActive(false);
+                if (radialFillImage != null)
+                {
+                    radialFillImage.fillAmount = 0f;
+                    radialFillImage.gameObject.SetActive(false);
+                }
+            }
         }
 
         if (countdownStarted && !isUiVisible)
@@ -65,6 +103,45 @@ public class GameUi : MonoBehaviour
         }
 
         UpdateSignalDisplay();
+    }
+
+    private bool IsFirstPersonMode()
+    {
+        FollowCamera cam = GetComponent<FollowCamera>();
+        if (cam == null)
+            cam = FindObjectOfType<FollowCamera>();
+
+        if (cam != null)
+        {
+            System.Reflection.FieldInfo field = typeof(FollowCamera).GetField("_firstPersonMode", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (field != null)
+                return (bool)field.GetValue(cam);
+        }
+        return false;
+    }
+
+    private IEnumerator ShowUiFrame()
+    {
+        if (radialFillImage != null)
+        {
+            radialFillImage.fillAmount = 0f;
+            radialFillImage.gameObject.SetActive(true);
+        }
+
+        float elapsed = 0f;
+        while (elapsed < showDuration)
+        {
+            elapsed += Time.deltaTime;
+            float progress = elapsed / showDuration;
+
+            if (radialFillImage != null)
+                radialFillImage.fillAmount = progress;
+
+            yield return null;
+        }
+
+        if (radialFillImage != null)
+            radialFillImage.fillAmount = 1f;
     }
 
     private void InitializeSignalDisplay()
@@ -129,9 +206,13 @@ public class GameUi : MonoBehaviour
         {
             windowUi.SetActive(isUiVisible);
         }
-        if (frontSightUi != null)
+
+        if (isFirstPerson)
         {
-            frontSightUi.SetActive(!isUiVisible);
+            if (frontSightUi != null)
+            {
+                frontSightUi.SetActive(!isUiVisible);
+            }
         }
     }
 
