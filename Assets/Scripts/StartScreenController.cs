@@ -13,6 +13,8 @@ public class StartScreenController : MonoBehaviour
     [SerializeField] GameObject startScreenPanel;
     [Tooltip("点击后进入游戏的全屏隐形按钮")]
     [SerializeField] Button startButton;
+    [Tooltip("加载进度条")]
+    [SerializeField] Slider loadingSlider;
     [Tooltip("留空则只隐藏开始画面；填场景名则切换场景，如 PlaneGame")]
     [SerializeField] string gameSceneName;
 
@@ -30,6 +32,9 @@ public class StartScreenController : MonoBehaviour
     {
         if (startScreenPanel != null)
             startScreenPanel.SetActive(true);
+
+        if (loadingSlider != null)
+            loadingSlider.gameObject.SetActive(false);
 
         if (startButton != null)
             startButton.onClick.AddListener(OnStartGame);
@@ -50,6 +55,10 @@ public class StartScreenController : MonoBehaviour
         if (!string.IsNullOrEmpty(gameSceneName))
         {
             _loading = true;
+
+            if (loadingSlider != null)
+                loadingSlider.gameObject.SetActive(true);
+
             StartCoroutine(LoadGameSceneAsync());
         }
         else if (startScreenPanel != null)
@@ -62,8 +71,19 @@ public class StartScreenController : MonoBehaviour
     {
         AsyncOperation op = SceneManager.LoadSceneAsync(gameSceneName);
         if (op == null) yield break;
-        op.allowSceneActivation = true;
-        while (!op.isDone)
+        op.allowSceneActivation = false;
+
+        while (op.progress < 0.9f)
+        {
+            if (loadingSlider != null)
+                loadingSlider.value = op.progress;
             yield return null;
+        }
+
+        if (loadingSlider != null)
+            loadingSlider.value = 1f;
+
+        yield return new WaitForSeconds(0.1f);
+        op.allowSceneActivation = true;
     }
 }
