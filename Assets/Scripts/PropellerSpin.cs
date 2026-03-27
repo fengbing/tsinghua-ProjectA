@@ -21,10 +21,19 @@ public class PropellerSpin : MonoBehaviour
     [SerializeField] float degreesPerSecond = 1200f;
     [Tooltip("螺旋桨绕哪根轴转：看模型里桨叶的转轴方向选")]
     [SerializeField] SpinAxis spinAxis = SpinAxis.LocalY;
+    [Tooltip("旋转中心：TransformPivot 用物体自身 pivot；GeometryCenter 用渲染几何中心")]
+    [SerializeField] PivotMode pivotMode = PivotMode.TransformPivot;
 
     enum SpinAxis { LocalY, LocalZ, LocalX }
+    enum PivotMode { TransformPivot, GeometryCenter }
 
-    List<Transform> _list = new List<Transform>();
+    struct SpinTarget
+    {
+        public Transform transform;
+        public Renderer[] renderers;
+    }
+
+    List<SpinTarget> _targets = new List<SpinTarget>();
 
     void Start()
     {
@@ -38,35 +47,82 @@ public class PropellerSpin : MonoBehaviour
 
     void RefreshList()
     {
-        _list.Clear();
+        _targets.Clear();
         if (singlePropellerRoot != null)
         {
-            _list.Add(singlePropellerRoot);
+            AddTarget(singlePropellerRoot);
             return;
         }
         if (propellerGroup != null)
         {
             for (int i = 0; i < propellerGroup.childCount; i++)
-                _list.Add(propellerGroup.GetChild(i));
+                AddTarget(propellerGroup.GetChild(i));
         }
         else if (propellers != null)
         {
             foreach (Transform t in propellers)
-                if (t != null) _list.Add(t);
+                if (t != null) AddTarget(t);
         }
+    }
+
+    void AddTarget(Transform t)
+    {
+        _targets.Add(new SpinTarget
+        {
+            transform = t,
+            renderers = t.GetComponentsInChildren<Renderer>(true)
+        });
+    }
+
+    bool TryGetGeometryCenter(SpinTarget target, out Vector3 center)
+    {
+        center = target.transform.position;
+        Renderer[] renderers = target.renderers;
+        if (renderers == null || renderers.Length == 0) return false;
+
+        bool hasAny = false;
+        Bounds b = default;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer r = renderers[i];
+            if (r == null) continue;
+            if (!hasAny)
+            {
+                b = r.bounds;
+                hasAny = true;
+            }
+            else
+            {
+                b.Encapsulate(r.bounds);
+            }
+        }
+
+        if (!hasAny) return false;
+        center = b.center;
+        return true;
     }
 
     void FixedUpdate()
     {
-        if (_list.Count == 0) return;
+        if (_targets.Count == 0) return;
 
         float delta = degreesPerSecond * Time.fixedDeltaTime;
         Vector3 axis = spinAxis == SpinAxis.LocalZ ? Vector3.forward : (spinAxis == SpinAxis.LocalX ? Vector3.right : Vector3.up);
 
-        for (int i = 0; i < _list.Count; i++)
+        for (int i = 0; i < _targets.Count; i++)
         {
-            if (_list[i] != null)
-                _list[i].Rotate(axis, delta, Space.Self);
+            SpinTarget target = _targets[i];
+            if (target.transform == null) continue;
+
+            if (pivotMode == PivotMode.GeometryCenter && TryGetGeometryCenter(target, out Vector3 center))
+            {
+                Vector3 worldAxis = target.transform.TransformDirection(axis);
+                target.transform.RotateAround(center, worldAxis, delta);
+            }
+            else
+            {
+                target.transform.Rotate(axis, delta, Space.Self);
+            }
         }
     }
 }

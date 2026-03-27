@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5392afcdd1543984bbc07c54af804a48, type: 3}
+  m_Name: MinimapConfig
+  m_EditorClassIdentifier: 
+  mapSprite: {fileID: 21300000, guid: 217d3150ca387944a9cdfea4b850f658, type: 3}
+  circularMaskSprite: {fileID: 21300000, guid: 6ef43a679cc7e984ebd15ae196012fd8, type: 3}
+  worldMin: {x: -487, y: -266}
+  worldMax: {x: 402, y: 214}
+  mapRotationDegrees: 0
+  normalizedOffset: {x: 0, y: 0}
+  flipX: 0
+  flipY: 0
