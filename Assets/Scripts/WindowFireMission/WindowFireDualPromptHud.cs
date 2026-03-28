@@ -4,10 +4,22 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Screen-space prompt: F 键与台词各有一块独立背景（Image），便于换图。
+/// 布局：改 <see cref="layoutRootRect"/> / 子物体 <see cref="keyBlockRect"/>、<see cref="instructionBlockRect"/> 与 <see cref="rowLayoutGroup"/>。
 /// </summary>
 public class WindowFireDualPromptHud : MonoBehaviour
 {
     [SerializeField] GameObject panelRoot;
+    [Tooltip("整块 UI 根；调 Anchors、Pos(X,Y)、Width/Height 可移动与缩放整体")]
+    [SerializeField] RectTransform layoutRootRect;
+    [Tooltip("F 键区域：改 Width/Height、LayoutElement 的 Preferred Width 等")]
+    [SerializeField] RectTransform keyBlockRect;
+    [Tooltip("台词区域：常与 Flexible Width 配合拉满剩余空间")]
+    [SerializeField] RectTransform instructionBlockRect;
+    [Tooltip("水平排列：Spacing=两框间距；Padding=整体内边距")]
+    [SerializeField] HorizontalLayoutGroup rowLayoutGroup;
+    [Min(0f)]
+    [SerializeField] float rowSpacing = 14f;
+
     [Tooltip("F 键下方的背景图（可拖入 Sprite）")]
     [SerializeField] Image keyHintBackground;
     [SerializeField] TMP_Text keyHintText;
@@ -26,8 +38,45 @@ public class WindowFireDualPromptHud : MonoBehaviour
     {
         if (Instance == null)
             Instance = this;
+        WireLayoutReferences();
+        ApplyRowSpacing();
         if (panelRoot != null)
             panelRoot.SetActive(false);
+    }
+
+    void OnValidate()
+    {
+        ApplyRowSpacing();
+    }
+
+    void WireLayoutReferences()
+    {
+        if (panelRoot == null)
+            return;
+        if (layoutRootRect == null)
+            layoutRootRect = panelRoot.GetComponent<RectTransform>();
+        if (keyBlockRect == null)
+        {
+            var t = panelRoot.transform.Find("KeyBlock");
+            if (t != null)
+                keyBlockRect = t as RectTransform;
+        }
+
+        if (instructionBlockRect == null)
+        {
+            var t = panelRoot.transform.Find("InstructionBlock");
+            if (t != null)
+                instructionBlockRect = t as RectTransform;
+        }
+
+        if (rowLayoutGroup == null)
+            rowLayoutGroup = panelRoot.GetComponent<HorizontalLayoutGroup>();
+    }
+
+    void ApplyRowSpacing()
+    {
+        if (rowLayoutGroup != null)
+            rowLayoutGroup.spacing = rowSpacing;
     }
 
     void OnDestroy()

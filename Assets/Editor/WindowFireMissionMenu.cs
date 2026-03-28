@@ -72,6 +72,11 @@ public static class WindowFireMissionMenu
         var hud = canvasGo.AddComponent<WindowFireDualPromptHud>();
         var so = new SerializedObject(hud);
         so.FindProperty("panelRoot").objectReferenceValue = panel;
+        so.FindProperty("layoutRootRect").objectReferenceValue = panelRt;
+        so.FindProperty("keyBlockRect").objectReferenceValue = keyBlock.GetComponent<RectTransform>();
+        so.FindProperty("instructionBlockRect").objectReferenceValue = instrBlock.GetComponent<RectTransform>();
+        so.FindProperty("rowLayoutGroup").objectReferenceValue = hlg;
+        so.FindProperty("rowSpacing").floatValue = 14f;
         so.FindProperty("keyHintBackground").objectReferenceValue = keyBg;
         so.FindProperty("keyHintText").objectReferenceValue = keyTmp;
         so.FindProperty("instructionBackground").objectReferenceValue = instrBg;
@@ -126,10 +131,43 @@ public static class WindowFireMissionMenu
     static void CreateWindowAnchor()
     {
         var go = new GameObject("WindowFireMissionAnchor");
-        var box = go.AddComponent<BoxCollider>();
-        box.isTrigger = true;
-        box.size = new Vector3(8f, 5f, 8f);
-        go.AddComponent<WindowFireMission>();
+        var mission = go.AddComponent<WindowFireMission>();
+
+        var windowZoneGo = new GameObject("WindowApproachZone");
+        windowZoneGo.transform.SetParent(go.transform, false);
+        windowZoneGo.transform.localPosition = Vector3.zero;
+        var windowBox = windowZoneGo.AddComponent<BoxCollider>();
+        windowBox.isTrigger = true;
+        windowBox.size = new Vector3(12f, 7f, 12f);
+        var windowProximity = windowZoneGo.AddComponent<WindowFireProximityZone>();
+        var soWindowZ = new SerializedObject(windowProximity);
+        soWindowZ.FindProperty("kind").enumValueIndex = (int)WindowFireProximityZone.ZoneKind.WindowApproach;
+        soWindowZ.FindProperty("mission").objectReferenceValue = mission;
+        soWindowZ.ApplyModifiedPropertiesWithoutUndo();
+
+        var smokeZoneGo = new GameObject("SmokeApproachZone");
+        smokeZoneGo.transform.SetParent(go.transform, false);
+        smokeZoneGo.transform.localPosition = Vector3.zero;
+        var smokeBox = smokeZoneGo.AddComponent<BoxCollider>();
+        smokeBox.isTrigger = true;
+        smokeBox.size = new Vector3(5f, 4f, 5f);
+        var smokeProximity = smokeZoneGo.AddComponent<WindowFireProximityZone>();
+        var soSmokeZ = new SerializedObject(smokeProximity);
+        soSmokeZ.FindProperty("kind").enumValueIndex = (int)WindowFireProximityZone.ZoneKind.SmokeApproach;
+        soSmokeZ.FindProperty("mission").objectReferenceValue = mission;
+        soSmokeZ.ApplyModifiedPropertiesWithoutUndo();
+
+        var zone2Go = new GameObject("Zone2SmokeAmbienceZone");
+        zone2Go.transform.SetParent(go.transform, false);
+        zone2Go.transform.localPosition = Vector3.zero;
+        var zone2Box = zone2Go.AddComponent<BoxCollider>();
+        zone2Box.isTrigger = true;
+        zone2Box.size = new Vector3(6f, 5f, 6f);
+        var zone2Prox = zone2Go.AddComponent<WindowFireProximityZone>();
+        var soZ2 = new SerializedObject(zone2Prox);
+        soZ2.FindProperty("kind").enumValueIndex = (int)WindowFireProximityZone.ZoneKind.Zone2SmokeAmbience;
+        soZ2.FindProperty("mission").objectReferenceValue = mission;
+        soZ2.ApplyModifiedPropertiesWithoutUndo();
 
         var fireChild = new GameObject("FireVFX");
         fireChild.transform.SetParent(go.transform, false);
@@ -171,7 +209,6 @@ public static class WindowFireMissionMenu
         smShape.shapeType = ParticleSystemShapeType.Sphere;
         smShape.radius = 0.25f;
 
-        var mission = go.GetComponent<WindowFireMission>();
         var so = new SerializedObject(mission);
         var fireProp = so.FindProperty("fireEffects");
         fireProp.arraySize = 1;
