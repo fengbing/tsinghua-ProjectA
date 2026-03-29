@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
+using UnityEngine.Video;
 
 /// <summary>
-/// 窗口区第一段旁白；烟区第二段旁白与交互；Zone2 仅控制烟环境音；UI 在对应旁白播完后出现；第二次 F 全屏图，ESC 关闭。
+/// 窗口区第一段旁白；烟区第二段旁白与交互；Zone2 仅控制烟环境音；UI 在对应旁白播完后出现；第二次 F 播结束视频（加载/结束转场图），ESC 关闭；
+/// 若配置 Additive 小游戏：结束视频后可选先播一段音频再全屏转场图，最后进入小游戏场景；
+/// 结束视频流程正常播完后可启用预先禁用的场景模型。
 /// </summary>
 public class WindowFireMission : MonoBehaviour
 {
@@ -60,10 +63,40 @@ public class WindowFireMission : MonoBehaviour
     [SerializeField] AudioClip waterSprayLoop;
     [SerializeField] AudioSource waterAudioSource;
 
-    [Header("结束：全屏图（第二次按 F，不再切场景）")]
-    [Tooltip("第二次按 F 后全屏显示；按 ESC 关闭")]
-    [SerializeField] Sprite endFullscreenSprite;
+    [Header("结束：视频 + 转场图（第二次按 F）")]
+    [Tooltip("第二次按 F 后播放；视频期间冻结场景；第二段转场淡出后回到游戏。按 ESC 可随时中断并恢复")]
+    [SerializeField] VideoClip endSequenceVideo;
+    [Tooltip("视频 Prepare/加载阶段全屏显示（淡入淡出）")]
+    [SerializeField] Sprite videoPrepareTransitionSprite;
+    [Tooltip("视频结束后全屏显示再淡出，随后关闭 UI 回到原场景")]
+    [SerializeField] Sprite videoFinishedTransitionSprite;
+    [Tooltip("转场图淡入时长（秒，不受 timeScale 影响）")]
+    [SerializeField] float transitionFadeInSeconds = 0.6f;
+    [Tooltip("转场图 / 视频层淡出时长（秒）")]
+    [SerializeField] float transitionFadeOutSeconds = 0.6f;
+    [Tooltip("加载转场图在 Prepare 完成后最少再显示时长（秒）")]
+    [SerializeField] float minPrepareTransitionSeconds = 0.35f;
+    [Tooltip("Prepare 超时（秒），避免卡死")]
+    [SerializeField] float videoPrepareTimeoutSeconds = 15f;
     [SerializeField] int endScreenCanvasSortOrder = 400;
+
+    [Header("结束后 — 场景内模型")]
+    [Tooltip("结束视频与两段转场全部播完、回到场景后 SetActive(true)。可先禁用；数量按需要填写（常见为两个）。")]
+    [SerializeField] List<GameObject> activateAfterEndVideo = new List<GameObject>();
+
+    [Header("结束后（可选）— Additive 小游戏")]
+    [Tooltip("非空时：结束视频与转场全部完成后，Additive 加载该场景；主场景不卸载，返回后机位不变。需加入 Build Settings；场景内用 MiniGameReturnController 返回。")]
+    [SerializeField] string postEndSequenceAdditiveMiniGameScene;
+    [Tooltip("勾选后主世界与小游戏 timeScale 都会为 0，小游戏内 SmoothDamp/部分 UI 刷新依赖 unscaledDeltaTime 虽仍可用，但易与 HUD/光标表现冲突。建议不勾选：只关主 UI/相机并 Kinematic 冻无人机。")]
+    [SerializeField] bool pauseWorldDuringAdditiveMiniGame;
+    [Tooltip("进入小游戏前播放（在转场图之前）；不填则跳过")]
+    [SerializeField] AudioClip preAdditiveMiniGameClip;
+    [Tooltip("播放入门音频用；不填则用 voiceSource")]
+    [SerializeField] AudioSource preAdditiveMiniGameAudioSource;
+    [Tooltip("音频之后全屏显示该图（淡入→停留→淡出）；不填则跳过")]
+    [SerializeField] Sprite preAdditiveMiniGameTransitionSprite;
+    [Tooltip("转场图完全显示后的停留时长（秒，不受 timeScale 影响）")]
+    [SerializeField] float preAdditiveMiniGameTransitionHoldSeconds = 0.35f;
 
     Phase _phase = Phase.Idle;
     int _windowZoneCount;
@@ -79,6 +112,20 @@ public class WindowFireMission : MonoBehaviour
     Coroutine _hudThermalDelayCo;
     bool _endFullscreenActive;
     GameObject _endFullscreenRoot;
+    Image _endTransitionImage;
+    CanvasGroup _transitionCanvasGroup;
+    RawImage _endVideoRaw;
+    CanvasGroup _videoCanvasGroup;
+    VideoPlayer _endVideoPlayer;
+    RenderTexture _endVideoRenderTexture;
+    AudioSource _endVideoAudioSource;
+    Coroutine _endVideoRoutine;
+    bool _endVideoLoopReached;
+    float _savedTimeScale = 1f;
+    bool _gameplayFrozenForEndVideo;
+    GameObject _preMiniGameBridgeRoot;
+    Image _preMiniGameBridgeImage;
+    CanvasGroup _preMiniGameBridgeGroup;
 
     public static bool IsDroneCollider(Collider other)
     {
@@ -301,14 +348,15 @@ public class WindowFireMission : MonoBehaviour
             _sprinklerRoutine = null;
         }
 
-        HideEndFullscreen();
+        TeardownEndSequence();
+        TeardownPreMiniGameBridgeCanvas();
     }
 
     void Update()
     {
         if (_endFullscreenActive && Input.GetKeyDown(KeyCode.Escape))
         {
-            HideEndFullscreen();
+            TeardownEndSequence();
             return;
         }
 
@@ -494,9 +542,17 @@ public class WindowFireMission : MonoBehaviour
 
     void OnThermalConfirmed()
     {
-        if (endFullscreenSprite == null)
+        if (endSequenceVideo == null)
         {
-            Debug.LogWarning($"{nameof(WindowFireMission)}: 未设置 {nameof(endFullscreenSprite)}，无法显示结束全屏图。", this);
+            Debug.LogWarning($"{nameof(WindowFireMission)}: 未设置 {nameof(endSequenceVideo)}，无法播放结束视频。", this);
+            return;
+        }
+
+        if (videoPrepareTransitionSprite == null || videoFinishedTransitionSprite == null)
+        {
+            Debug.LogWarning(
+                $"{nameof(WindowFireMission)}: 请设置 {nameof(videoPrepareTransitionSprite)} 与 {nameof(videoFinishedTransitionSprite)}。",
+                this);
             return;
         }
 
@@ -505,15 +561,191 @@ public class WindowFireMission : MonoBehaviour
         StopHudDelayCoroutines();
         if (hud != null)
             hud.Hide();
-        ShowEndFullscreen();
+
+        if (_endVideoRoutine != null)
+            StopCoroutine(_endVideoRoutine);
+        _endVideoRoutine = StartCoroutine(CoEndVideoWithTransitions());
     }
 
-    void ShowEndFullscreen()
+    IEnumerator CoEndVideoWithTransitions()
     {
-        if (_endFullscreenRoot != null || endFullscreenSprite == null)
+        TeardownEndSequence();
+        BuildEndSequenceCanvas();
+        _endFullscreenActive = true;
+        RestoreGameplayTimeScale();
+
+        _endTransitionImage.sprite = videoPrepareTransitionSprite;
+        _transitionCanvasGroup.alpha = 0f;
+        _videoCanvasGroup.alpha = 0f;
+        _endVideoRaw.gameObject.SetActive(true);
+
+        _endVideoPlayer.clip = endSequenceVideo;
+        _endVideoPlayer.timeUpdateMode = VideoTimeUpdateMode.GameTime;
+        _endVideoPlayer.Prepare();
+
+        yield return FadeCanvasGroup(_transitionCanvasGroup, 0f, 1f, transitionFadeInSeconds);
+
+        float waited = 0f;
+        while (!_endVideoPlayer.isPrepared && waited < videoPrepareTimeoutSeconds)
+        {
+            waited += Time.unscaledDeltaTime;
+            yield return null;
+        }
+
+        if (!_endVideoPlayer.isPrepared)
+        {
+            Debug.LogError($"{nameof(WindowFireMission)}: 视频 Prepare 失败或超时。", this);
+            yield return FadeCanvasGroup(_transitionCanvasGroup, _transitionCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
+            TeardownEndSequence();
+            _endVideoRoutine = null;
+            yield break;
+        }
+
+        if (minPrepareTransitionSeconds > 0f)
+            yield return new WaitForSecondsRealtime(minPrepareTransitionSeconds);
+
+        yield return FadeCanvasGroup(_transitionCanvasGroup, _transitionCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
+
+        FreezeGameplayForEndVideo();
+        yield return FadeCanvasGroup(_videoCanvasGroup, 0f, 1f, transitionFadeInSeconds);
+        _endVideoLoopReached = false;
+        _endVideoPlayer.loopPointReached += OnEndVideoLoopPointReached;
+        _endVideoPlayer.Play();
+
+        yield return new WaitUntil(() => _endVideoLoopReached);
+
+        _endVideoPlayer.loopPointReached -= OnEndVideoLoopPointReached;
+        _endVideoPlayer.Stop();
+
+        // 全程保持冻结，直到第二段转场淡出完毕并在 Teardown 里恢复 timeScale
+        yield return FadeCanvasGroup(_videoCanvasGroup, _videoCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
+
+        _endTransitionImage.sprite = videoFinishedTransitionSprite;
+        yield return FadeCanvasGroup(_transitionCanvasGroup, 0f, 1f, transitionFadeInSeconds);
+
+        yield return FadeCanvasGroup(_transitionCanvasGroup, _transitionCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
+
+        // 必须先清引用：TeardownEndSequence 会 StopCoroutine(_endVideoRoutine)，否则会停掉当前协程，后续音频/转场/小游戏不会执行
+        _endVideoRoutine = null;
+        TeardownEndSequence();
+        ActivateModelsAfterEndVideo();
+
+        if (!string.IsNullOrWhiteSpace(postEndSequenceAdditiveMiniGameScene))
+            yield return CoPreMiniGameBridgeThenAdditive();
+    }
+
+    IEnumerator CoPreMiniGameBridgeThenAdditive()
+    {
+        AudioSource src = preAdditiveMiniGameAudioSource != null ? preAdditiveMiniGameAudioSource : voiceSource;
+        if (preAdditiveMiniGameClip != null)
+        {
+            if (src == null)
+            {
+                Debug.LogWarning(
+                    $"{nameof(WindowFireMission)}: 已配置 {nameof(preAdditiveMiniGameClip)} 但无可用 AudioSource（可指定 {nameof(preAdditiveMiniGameAudioSource)} 或 {nameof(voiceSource)}）。",
+                    this);
+            }
+            else
+            {
+                src.Stop();
+                src.clip = preAdditiveMiniGameClip;
+                src.Play();
+                yield return new WaitWhile(() => src.isPlaying);
+            }
+        }
+
+        if (preAdditiveMiniGameTransitionSprite != null)
+        {
+            BuildPreMiniGameBridgeCanvas();
+            _preMiniGameBridgeImage.sprite = preAdditiveMiniGameTransitionSprite;
+            _preMiniGameBridgeGroup.alpha = 0f;
+            yield return FadeCanvasGroup(_preMiniGameBridgeGroup, 0f, 1f, transitionFadeInSeconds);
+            if (preAdditiveMiniGameTransitionHoldSeconds > 0f)
+                yield return new WaitForSecondsRealtime(preAdditiveMiniGameTransitionHoldSeconds);
+            yield return FadeCanvasGroup(_preMiniGameBridgeGroup, _preMiniGameBridgeGroup.alpha, 0f, transitionFadeOutSeconds);
+            TeardownPreMiniGameBridgeCanvas();
+        }
+
+        MiniGameAdditiveFlow.Begin(
+            postEndSequenceAdditiveMiniGameScene.Trim(),
+            pauseWorldDuringAdditiveMiniGame);
+    }
+
+    IEnumerator FadeCanvasGroup(CanvasGroup cg, float fromAlpha, float toAlpha, float duration)
+    {
+        if (cg == null)
+            yield break;
+
+        cg.alpha = fromAlpha;
+        bool visible = toAlpha > 0.01f;
+        cg.interactable = visible;
+        cg.blocksRaycasts = visible;
+
+        if (duration <= 0f)
+        {
+            cg.alpha = toAlpha;
+            visible = toAlpha > 0.01f;
+            cg.interactable = visible;
+            cg.blocksRaycasts = visible;
+            yield break;
+        }
+
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.unscaledDeltaTime;
+            cg.alpha = Mathf.Lerp(fromAlpha, toAlpha, Mathf.Clamp01(t / duration));
+            yield return null;
+        }
+
+        cg.alpha = toAlpha;
+        visible = toAlpha > 0.01f;
+        cg.interactable = visible;
+        cg.blocksRaycasts = visible;
+    }
+
+    void FreezeGameplayForEndVideo()
+    {
+        if (_gameplayFrozenForEndVideo)
+            return;
+        _savedTimeScale = Time.timeScale;
+        Time.timeScale = 0f;
+        _gameplayFrozenForEndVideo = true;
+        if (_endVideoPlayer != null)
+            _endVideoPlayer.timeUpdateMode = VideoTimeUpdateMode.UnscaledGameTime;
+    }
+
+    void RestoreGameplayTimeScale()
+    {
+        if (!_gameplayFrozenForEndVideo)
+            return;
+        Time.timeScale = _savedTimeScale;
+        _gameplayFrozenForEndVideo = false;
+        if (_endVideoPlayer != null)
+            _endVideoPlayer.timeUpdateMode = VideoTimeUpdateMode.GameTime;
+    }
+
+    void OnEndVideoLoopPointReached(VideoPlayer source)
+    {
+        _endVideoLoopReached = true;
+    }
+
+    static void StretchChildFullScreen(Transform parent, GameObject go)
+    {
+        go.transform.SetParent(parent, false);
+        var r = go.GetComponent<RectTransform>();
+        r.anchorMin = Vector2.zero;
+        r.anchorMax = Vector2.one;
+        r.offsetMin = Vector2.zero;
+        r.offsetMax = Vector2.zero;
+    }
+
+    void BuildEndSequenceCanvas()
+    {
+        if (_endFullscreenRoot != null)
             return;
 
-        var canvasGo = new GameObject("MissionEndFullscreen");
+        var canvasGo = new GameObject("MissionEndVideoCanvas");
         var canvas = canvasGo.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
         canvas.sortingOrder = endScreenCanvasSortOrder;
@@ -522,28 +754,156 @@ public class WindowFireMission : MonoBehaviour
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         scaler.referenceResolution = new Vector2(1920, 1080);
 
-        var imgGo = new GameObject("FullScreenImage", typeof(RectTransform), typeof(Image));
-        imgGo.transform.SetParent(canvasGo.transform, false);
-        var rt = imgGo.GetComponent<RectTransform>();
-        rt.anchorMin = Vector2.zero;
-        rt.anchorMax = Vector2.one;
-        rt.offsetMin = Vector2.zero;
-        rt.offsetMax = Vector2.zero;
-        var img = imgGo.GetComponent<Image>();
-        img.sprite = endFullscreenSprite;
-        img.preserveAspect = true;
-        img.raycastTarget = true;
+        // 转场与视频可同时为 alpha=0；底层黑场避免透视到游戏场景闪一帧
+        var backdropGo = new GameObject("EndSequenceBackdrop", typeof(RectTransform), typeof(Image));
+        StretchChildFullScreen(canvasGo.transform, backdropGo);
+        var backdropImage = backdropGo.GetComponent<Image>();
+        var white = Texture2D.whiteTexture;
+        backdropImage.sprite = Sprite.Create(
+            white,
+            new Rect(0f, 0f, white.width, white.height),
+            new Vector2(0.5f, 0.5f),
+            100f);
+        backdropImage.color = Color.black;
+        backdropImage.raycastTarget = false;
+
+        var transitionGo = new GameObject("TransitionImage", typeof(RectTransform), typeof(Image), typeof(CanvasGroup));
+        StretchChildFullScreen(canvasGo.transform, transitionGo);
+        _endTransitionImage = transitionGo.GetComponent<Image>();
+        _endTransitionImage.preserveAspect = true;
+        _endTransitionImage.raycastTarget = true;
+        _transitionCanvasGroup = transitionGo.GetComponent<CanvasGroup>();
+        _transitionCanvasGroup.alpha = 0f;
+        _transitionCanvasGroup.blocksRaycasts = false;
+        _transitionCanvasGroup.interactable = false;
+
+        var rawGo = new GameObject("VideoRawImage", typeof(RectTransform), typeof(RawImage), typeof(CanvasGroup));
+        StretchChildFullScreen(canvasGo.transform, rawGo);
+        _endVideoRaw = rawGo.GetComponent<RawImage>();
+        _endVideoRaw.raycastTarget = true;
+        _endVideoRaw.texture = null;
+        _videoCanvasGroup = rawGo.GetComponent<CanvasGroup>();
+        _videoCanvasGroup.alpha = 0f;
+        _videoCanvasGroup.blocksRaycasts = false;
+        _videoCanvasGroup.interactable = false;
+
+        var audioHost = new GameObject("VideoAudio");
+        audioHost.transform.SetParent(canvasGo.transform, false);
+        _endVideoAudioSource = audioHost.AddComponent<AudioSource>();
+        _endVideoAudioSource.playOnAwake = false;
+        _endVideoAudioSource.spatialBlend = 0f;
+
+        var vpHost = new GameObject("VideoPlayer");
+        vpHost.transform.SetParent(canvasGo.transform, false);
+        _endVideoPlayer = vpHost.AddComponent<VideoPlayer>();
+        _endVideoPlayer.playOnAwake = false;
+        _endVideoPlayer.isLooping = false;
+        _endVideoPlayer.renderMode = VideoRenderMode.RenderTexture;
+        _endVideoPlayer.audioOutputMode = VideoAudioOutputMode.AudioSource;
+        _endVideoPlayer.EnableAudioTrack(0, true);
+        _endVideoPlayer.SetTargetAudioSource(0, _endVideoAudioSource);
+
+        int w = (int)endSequenceVideo.width;
+        int h = (int)endSequenceVideo.height;
+        if (w <= 16 || h <= 16)
+        {
+            w = 1920;
+            h = 1080;
+        }
+
+        _endVideoRenderTexture = new RenderTexture(w, h, 0);
+        _endVideoPlayer.targetTexture = _endVideoRenderTexture;
+        _endVideoRaw.texture = _endVideoRenderTexture;
 
         _endFullscreenRoot = canvasGo;
-        _endFullscreenActive = true;
     }
 
-    void HideEndFullscreen()
+    void BuildPreMiniGameBridgeCanvas()
     {
+        if (_preMiniGameBridgeRoot != null)
+            return;
+
+        var canvasGo = new GameObject("PreMiniGameBridgeCanvas");
+        var canvas = canvasGo.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = endScreenCanvasSortOrder + 50;
+        canvasGo.AddComponent<GraphicRaycaster>();
+        var scaler = canvasGo.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920, 1080);
+
+        var backdropGo = new GameObject("BridgeBackdrop", typeof(RectTransform), typeof(Image));
+        StretchChildFullScreen(canvasGo.transform, backdropGo);
+        var backdropImage = backdropGo.GetComponent<Image>();
+        var white = Texture2D.whiteTexture;
+        backdropImage.sprite = Sprite.Create(
+            white,
+            new Rect(0f, 0f, white.width, white.height),
+            new Vector2(0.5f, 0.5f),
+            100f);
+        backdropImage.color = Color.black;
+        backdropImage.raycastTarget = false;
+
+        var imgGo = new GameObject("BridgeTransition", typeof(RectTransform), typeof(Image), typeof(CanvasGroup));
+        StretchChildFullScreen(canvasGo.transform, imgGo);
+        _preMiniGameBridgeImage = imgGo.GetComponent<Image>();
+        _preMiniGameBridgeImage.preserveAspect = true;
+        _preMiniGameBridgeImage.raycastTarget = false;
+        _preMiniGameBridgeGroup = imgGo.GetComponent<CanvasGroup>();
+        _preMiniGameBridgeGroup.alpha = 0f;
+        _preMiniGameBridgeGroup.blocksRaycasts = false;
+        _preMiniGameBridgeGroup.interactable = false;
+
+        _preMiniGameBridgeRoot = canvasGo;
+    }
+
+    void TeardownPreMiniGameBridgeCanvas()
+    {
+        if (_preMiniGameBridgeRoot != null)
+            Destroy(_preMiniGameBridgeRoot);
+
+        _preMiniGameBridgeRoot = null;
+        _preMiniGameBridgeImage = null;
+        _preMiniGameBridgeGroup = null;
+    }
+
+    void TeardownEndSequence()
+    {
+        RestoreGameplayTimeScale();
+
+        if (_endVideoRoutine != null)
+        {
+            StopCoroutine(_endVideoRoutine);
+            _endVideoRoutine = null;
+        }
+
+        if (_endVideoPlayer != null)
+        {
+            _endVideoPlayer.loopPointReached -= OnEndVideoLoopPointReached;
+            _endVideoPlayer.Stop();
+            _endVideoPlayer.targetTexture = null;
+            _endVideoPlayer.clip = null;
+        }
+
+        if (_endVideoRenderTexture != null)
+        {
+            _endVideoRenderTexture.Release();
+            Destroy(_endVideoRenderTexture);
+            _endVideoRenderTexture = null;
+        }
+
         if (_endFullscreenRoot != null)
             Destroy(_endFullscreenRoot);
+
         _endFullscreenRoot = null;
+        _endTransitionImage = null;
+        _transitionCanvasGroup = null;
+        _endVideoRaw = null;
+        _videoCanvasGroup = null;
+        _endVideoPlayer = null;
+        _endVideoAudioSource = null;
         _endFullscreenActive = false;
+        _endVideoLoopReached = false;
     }
 
     static void SuppressEffects(List<ParticleSystem> systems)
@@ -557,6 +917,17 @@ public class WindowFireMission : MonoBehaviour
             var em = ps.emission;
             em.enabled = false;
             ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        }
+    }
+
+    void ActivateModelsAfterEndVideo()
+    {
+        if (activateAfterEndVideo == null)
+            return;
+        foreach (var go in activateAfterEndVideo)
+        {
+            if (go != null)
+                go.SetActive(true);
         }
     }
 

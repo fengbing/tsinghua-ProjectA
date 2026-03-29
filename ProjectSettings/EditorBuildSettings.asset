@@ -17,4 +17,7 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/fire.unity
     guid: 6496a212e358ae044948ce04aac7c1a1
+  - enabled: 1
+    path: Assets/Scenes/BuiltinMiniGame.unity
+    guid: 01773fc7933bf9d439dd26de5dc95421
   m_configObjects: {}
