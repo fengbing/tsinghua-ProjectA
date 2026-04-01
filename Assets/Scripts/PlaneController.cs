@@ -300,6 +300,9 @@ public class PlaneController : MonoBehaviour
     /// <summary>禁用输入（如 Game Over 时）。</summary>
     public void SetInputEnabled(bool enabled) => _inputEnabled = enabled;
 
+    /// <summary>输入是否启用。</summary>
+    public bool IsInputEnabled => _inputEnabled;
+
     /// <summary>重置位置与速度。</summary>
     public void ResetTo(Vector3 position, Quaternion rotation)
     {

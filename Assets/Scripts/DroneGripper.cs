@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using System.Collections;
 
 /// <summary>
@@ -84,7 +85,17 @@ public class DroneGripper : MonoBehaviour
     [Tooltip("用于等待期间记录按 F 当帧 Animator 的 stateHash，避免在未真正播放 open 时就因初始已处于 HoldOpen 而立即抓取。")]
     [SerializeField] bool usePressStateHashGuard = true;
 
+    [Header("特效切换")]
+    [SerializeField] private GameObject effectTransition;
+
+    [Header("跨场景抓取恢复")]
+    [Tooltip("切换场景后恢复抓取时，用此名称在新场景中查找同名包裹对象")]
+    [SerializeField] string carriedPackageName = "Package";
+
+    // --- Runtime state ---
     Rigidbody _droneRb;
+    bool _wasHoldingBeforeSceneLoad;
+    Vector3 _carriedRelativeOffset;
     Grabbable _candidate;
     Grabbable _holding;
     FixedJoint _joint;
@@ -506,6 +517,9 @@ public class DroneGripper : MonoBehaviour
 
         if (debugAlignment) _debugFramesRemaining = 5;
 
+        if (effectTransition != null)
+            effectTransition.SendMessage("ShowEffect2");
+
         if (debugAlignment)
         {
             Vector3 jointAnchorWorld = boxRb.transform.TransformPoint(_joint.anchor);
@@ -878,5 +892,82 @@ public class DroneGripper : MonoBehaviour
     /// GrabPoint 的中心点（用于 PlaneController 计算 FixedJoint 相对质心的偏移）。
     /// </summary>
     public Vector3 GrabPointCenterWorld => GetGrabPointCenterWorld();
+
+    void OnEnable()
+    {
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    void OnDisable()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (!_wasHoldingBeforeSceneLoad) return;
+        _wasHoldingBeforeSceneLoad = false;
+
+        var allPackages = FindObjectsOfType<Grabbable>();
+        Grabbable target = null;
+        foreach (var p in allPackages)
+        {
+            if (p.name == carriedPackageName || p.name.Contains(carriedPackageName))
+            {
+                target = p;
+                break;
+            }
+        }
+
+        if (target != null)
+        {
+            ReAttachPackage(target);
+        }
+    }
+
+    /// <summary>
+    /// 切换场景前调用：保存抓取状态，使无人机跨场景存活，并触发场景切换。
+    /// </summary>
+    public void PrepareForSceneTransition(string targetScene)
+    {
+        if (_holding == null) return;
+
+        _wasHoldingBeforeSceneLoad = true;
+        _carriedRelativeOffset = _holding.transform.position - transform.position;
+
+        Rigidbody boxRb = _holding.Rigidbody;
+        _holding = null;
+
+        if (boxRb != null)
+        {
+            var j = boxRb.GetComponent<FixedJoint>();
+            if (j != null) Destroy(j);
+        }
+        _joint = null;
+
+        DontDestroyOnLoad(gameObject);
+
+        SceneManager.LoadScene(targetScene);
+    }
+
+    void ReAttachPackage(Grabbable package)
+    {
+        _holding = package;
+        Rigidbody boxRb = package.Rigidbody;
+        if (boxRb == null) return;
+
+        boxRb.position = transform.position + _carriedRelativeOffset;
+        boxRb.velocity = Vector3.zero;
+        boxRb.angularVelocity = Vector3.zero;
+
+        _joint = boxRb.gameObject.AddComponent<FixedJoint>();
+        _joint.connectedBody = _droneRb;
+        _joint.breakForce = breakForce;
+        _joint.breakTorque = breakTorque;
+        _joint.autoConfigureConnectedAnchor = false;
+        _joint.anchor = Vector3.zero;
+        _joint.connectedAnchor = _droneRb.transform.InverseTransformPoint(GetGrabPointCenterWorld());
+        _joint.massScale = payloadMassScale;
+    }
 }
 

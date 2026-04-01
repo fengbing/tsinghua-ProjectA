@@ -13,6 +13,14 @@ public class FollowCamera : MonoBehaviour
     [SerializeField] float maxPitch = 60f;
     [SerializeField] bool lockCursor = true;
 
+    [Header("相机避障")]
+    [Tooltip("相机距离障碍物的最小间隔")]
+    [SerializeField] float collisionOffset = 0.1f;
+    [Tooltip("避障检测的层级")]
+    [SerializeField] LayerMask collisionLayers = ~0;
+    [Tooltip("相机球形检测半径")]
+    [SerializeField] float cameraRadius = 0.2f;
+
     [Header("第一人称（按 Alt 切换）")]
     [Tooltip("第一人称时相机在目标局部空间的偏移")]
     [SerializeField] Vector3 firstPersonOffset = new Vector3(0f, 0.3f, 0.5f);
@@ -34,6 +42,28 @@ public class FollowCamera : MonoBehaviour
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
         }
+    }
+
+    /// <summary>
+    /// 计算避障后的安全相机位置。
+    /// 从目标位置向期望相机位置发射射线，检测障碍物并调整相机位置。
+    /// </summary>
+    Vector3 GetCollisionSafePosition(Vector3 origin, Vector3 desired, float offset, LayerMask layers, float radius)
+    {
+        Vector3 direction = desired - origin;
+        float distance = direction.magnitude;
+        if (distance < 0.001f) return desired;
+
+        direction.Normalize();
+
+        // 球形射线检测，防止相机穿入障碍物
+        if (Physics.SphereCast(origin, radius, direction, out RaycastHit hit, distance, layers))
+        {
+            // 将相机放在障碍物表面之外，留出 offset 间隔
+            return hit.point - direction * (radius + offset);
+        }
+
+        return desired;
     }
 
     void LateUpdate()
@@ -60,7 +90,8 @@ public class FollowCamera : MonoBehaviour
         else
         {
             Vector3 desired = target.position + rotation * offset;
-            transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
+            Vector3 safePosition = GetCollisionSafePosition(target.position, desired, collisionOffset, collisionLayers, cameraRadius);
+            transform.position = Vector3.SmoothDamp(transform.position, safePosition, ref _vel, smoothTime);
             transform.rotation = rotation;
         }
     }
