@@ -5,19 +5,22 @@ EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
   m_Scenes:
-  - enabled: 0
+  - enabled: 1
     path: Assets/Scenes/0.unity
     guid: 7a9a6244fcad4c0499c7f931ae9e3083
-  - enabled: 0
+  - enabled: 1
+    path: Assets/Scenes/storage.unity
+    guid: 941c2a1b2b517284cb5b192664dab9b8
+  - enabled: 1
     path: Assets/Scenes/PlaneGame.unity
     guid: a4db263bfeb016a4688c017bbaebe966
   - enabled: 1
     path: Assets/Scenes/Level 2.unity
     guid: 7368b5c6e1d2f0047b9c9f53772b61f2
-  - enabled: 0
-    path: Assets/Scenes/fire.unity
-    guid: 6496a212e358ae044948ce04aac7c1a1
   - enabled: 1
     path: Assets/Scenes/BuiltinMiniGame.unity
     guid: 01773fc7933bf9d439dd26de5dc95421
+  - enabled: 0
+    path: Assets/Scenes/fire.unity
+    guid: 6496a212e358ae044948ce04aac7c1a1
   m_configObjects: {}

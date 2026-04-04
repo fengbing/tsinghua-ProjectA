@@ -116,7 +116,7 @@ public class MinimapUiController : MonoBehaviour
     private void Update()
     {
         if (config == null || playerTransform == null) return;
-        if (Input.GetKeyDown(toggleKey)) { mode = mode == MapViewMode.Minimap ? MapViewMode.Fullscreen : MapViewMode.Minimap; ApplyMode(); }
+        if (Input.GetKeyDown(toggleKey)) PerformToggle();
         UpdateMapLayers();
         RefreshMarkers();
         UpdatePlayerIcons();
@@ -349,6 +349,15 @@ public class MinimapUiController : MonoBehaviour
 
             fullMarkers[entry.id].anchoredPosition = ToAnchored(fullLayerSize, objectiveNormalized);
         }
+    }
+
+    /// <summary>
+    /// Same view change as one press of <see cref="toggleKey"/> (default M). Safe to call from gameplay / UI events.
+    /// </summary>
+    public void PerformToggle()
+    {
+        mode = mode == MapViewMode.Minimap ? MapViewMode.Fullscreen : MapViewMode.Minimap;
+        ApplyMode();
     }
 
     private void ApplyMode() { if (miniRoot != null) miniRoot.gameObject.SetActive(mode == MapViewMode.Minimap); if (fullRoot != null) fullRoot.gameObject.SetActive(mode == MapViewMode.Fullscreen); }

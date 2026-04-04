@@ -277,7 +277,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   startScreenPanel: {fileID: 817250734}
   startButton: {fileID: 1744991596}
-  gameSceneName: PlaneGame
+  gameSceneName: storage
 --- !u!114 &817250737
 MonoBehaviour:
   m_ObjectHideFlags: 0

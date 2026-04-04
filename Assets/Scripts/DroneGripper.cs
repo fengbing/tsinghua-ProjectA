@@ -88,14 +88,22 @@ public class DroneGripper : MonoBehaviour
     [Header("特效切换")]
     [SerializeField] private GameObject effectTransition;
 
-    [Header("跨场景抓取恢复")]
-    [Tooltip("切换场景后恢复抓取时，用此名称在新场景中查找同名包裹对象")]
-    [SerializeField] string carriedPackageName = "Package";
+    [Header("音频（刚按 F 抓取 / 按下放下时）")]
+    [Tooltip("留空则自动使用本物体上的 AudioSource，没有再添加一个")]
+    [SerializeField] AudioSource gripAudio;
+    [Tooltip("按下 F 且范围内有可抓物体时立即播放（不因动画延迟）")]
+    [SerializeField] AudioClip grabClip;
+    [SerializeField] AudioClip releaseClip;
+
+    [Header("跨场景到达后")]
+    [Tooltip("经 PrepareForSceneTransition 进入新场景后，模拟一次抓取键按下（与 Input 按 F 走同一套逻辑）")]
+    [SerializeField] bool simulateGrabKeyAfterSceneTransition = true;
+
+    /// <summary>由 PrepareForSceneTransition 在 LoadScene 前置位；新场景 DroneGripper 在 Start 里消费。</summary>
+    public static bool PendingSimulatedGrabKeyAfterLoad { get; private set; }
 
     // --- Runtime state ---
     Rigidbody _droneRb;
-    bool _wasHoldingBeforeSceneLoad;
-    Vector3 _carriedRelativeOffset;
     Grabbable _candidate;
     Grabbable _holding;
     FixedJoint _joint;
@@ -124,6 +132,7 @@ public class DroneGripper : MonoBehaviour
     bool _waitingForIdleOpen;
     float _idleOpenDeadline;
     int _animStateHashAtPress;
+    bool _simulateGrabKeyDownPending;
 
     struct ColliderPair
     {
@@ -167,6 +176,31 @@ public class DroneGripper : MonoBehaviour
 #endif
 
         _planeController = GetComponentInParent<PlaneController>();
+
+        if (grabClip != null || releaseClip != null)
+        {
+            if (gripAudio == null)
+                gripAudio = GetComponent<AudioSource>();
+            if (gripAudio == null)
+                gripAudio = gameObject.AddComponent<AudioSource>();
+            gripAudio.playOnAwake = false;
+        }
+    }
+
+    void Start()
+    {
+        if (!simulateGrabKeyAfterSceneTransition || !PendingSimulatedGrabKeyAfterLoad)
+            return;
+        PendingSimulatedGrabKeyAfterLoad = false;
+        StartCoroutine(CoQueueSimulatedGrabKeyAfterLoad());
+    }
+
+    IEnumerator CoQueueSimulatedGrabKeyAfterLoad()
+    {
+        yield return null;
+        yield return new WaitForFixedUpdate();
+        if (_holding != null) yield break;
+        _simulateGrabKeyDownPending = true;
     }
 
     Animator GetAnimator()
@@ -202,17 +236,23 @@ public class DroneGripper : MonoBehaviour
 
     void Update()
     {
-        if (Input.GetKeyDown(grabKey))
+        bool grabDown = Input.GetKeyDown(grabKey);
+        if (_simulateGrabKeyDownPending)
         {
-            if (_holding != null)
-            {
-                BeginRelease();
-                return;
-            }
-
-            if (_waitingForIdleOpen) return; // 等待 IdleOpen 期间不重复触发
-            BeginGrab();
+            grabDown = true;
+            _simulateGrabKeyDownPending = false;
         }
+
+        if (!grabDown) return;
+
+        if (_holding != null)
+        {
+            BeginRelease();
+            return;
+        }
+
+        if (_waitingForIdleOpen) return; // 等待 IdleOpen 期间不重复触发
+        BeginGrab();
     }
 
     void FixedUpdate()
@@ -341,6 +381,9 @@ public class DroneGripper : MonoBehaviour
     void BeginGrab()
     {
         if (_candidate == null || grabPoint == null) return;
+
+        if (grabClip != null && gripAudio != null)
+            gripAudio.PlayOneShot(grabClip);
 
         Animator anim = GetAnimator();
         if (anim != null && !string.IsNullOrEmpty(grabTriggerName))
@@ -780,6 +823,9 @@ public class DroneGripper : MonoBehaviour
 
     void BeginRelease()
     {
+        if (releaseClip != null && gripAudio != null)
+            gripAudio.PlayOneShot(releaseClip);
+
         Animator anim = GetAnimator();
         if (anim != null)
         {
@@ -893,47 +939,13 @@ public class DroneGripper : MonoBehaviour
     /// </summary>
     public Vector3 GrabPointCenterWorld => GetGrabPointCenterWorld();
 
-    void OnEnable()
-    {
-        SceneManager.sceneLoaded += OnSceneLoaded;
-    }
-
-    void OnDisable()
-    {
-        SceneManager.sceneLoaded -= OnSceneLoaded;
-    }
-
-    void OnSceneLoaded(Scene scene, LoadSceneMode mode)
-    {
-        if (!_wasHoldingBeforeSceneLoad) return;
-        _wasHoldingBeforeSceneLoad = false;
-
-        var allPackages = FindObjectsOfType<Grabbable>();
-        Grabbable target = null;
-        foreach (var p in allPackages)
-        {
-            if (p.name == carriedPackageName || p.name.Contains(carriedPackageName))
-            {
-                target = p;
-                break;
-            }
-        }
-
-        if (target != null)
-        {
-            ReAttachPackage(target);
-        }
-    }
-
     /// <summary>
-    /// 切换场景前调用：保存抓取状态，使无人机跨场景存活，并触发场景切换。
+    /// 切换场景：卸开当前抓取后整场景替换（不保留旧场景无人机、包裹、相机）。
+    /// 仍要求进入触发器时已抓着箱子，与 EffectTransition 原逻辑一致。
     /// </summary>
     public void PrepareForSceneTransition(string targetScene)
     {
         if (_holding == null) return;
-
-        _wasHoldingBeforeSceneLoad = true;
-        _carriedRelativeOffset = _holding.transform.position - transform.position;
 
         Rigidbody boxRb = _holding.Rigidbody;
         _holding = null;
@@ -945,29 +957,8 @@ public class DroneGripper : MonoBehaviour
         }
         _joint = null;
 
-        DontDestroyOnLoad(gameObject);
-
+        PendingSimulatedGrabKeyAfterLoad = true;
         SceneManager.LoadScene(targetScene);
-    }
-
-    void ReAttachPackage(Grabbable package)
-    {
-        _holding = package;
-        Rigidbody boxRb = package.Rigidbody;
-        if (boxRb == null) return;
-
-        boxRb.position = transform.position + _carriedRelativeOffset;
-        boxRb.velocity = Vector3.zero;
-        boxRb.angularVelocity = Vector3.zero;
-
-        _joint = boxRb.gameObject.AddComponent<FixedJoint>();
-        _joint.connectedBody = _droneRb;
-        _joint.breakForce = breakForce;
-        _joint.breakTorque = breakTorque;
-        _joint.autoConfigureConnectedAnchor = false;
-        _joint.anchor = Vector3.zero;
-        _joint.connectedAnchor = _droneRb.transform.InverseTransformPoint(GetGrabPointCenterWorld());
-        _joint.massScale = payloadMassScale;
     }
 }
 

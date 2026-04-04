@@ -15,7 +15,7 @@ public class StartScreenController : MonoBehaviour
     [SerializeField] Button startButton;
     [Tooltip("加载进度条")]
     [SerializeField] Slider loadingSlider;
-    [Tooltip("留空则只隐藏开始画面；填场景名则切换场景，如 PlaneGame")]
+    [Tooltip("留空则只隐藏开始画面；填场景名则切换场景，如 storage、PlaneGame")]
     [SerializeField] string gameSceneName;
 
     bool _loading;
