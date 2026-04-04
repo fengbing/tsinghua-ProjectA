@@ -30,6 +30,7 @@ public class FollowCamera : MonoBehaviour
     float _yaw;
     float _pitch;
     bool _firstPersonMode;
+    bool _mouseLookEnabled = true;
 
     void Start()
     {
@@ -73,8 +74,8 @@ public class FollowCamera : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.LeftAlt) || Input.GetKeyDown(KeyCode.RightAlt))
             _firstPersonMode = !_firstPersonMode;
 
-        float mouseX = Input.GetAxis("Mouse X");
-        float mouseY = Input.GetAxis("Mouse Y");
+        float mouseX = _mouseLookEnabled ? Input.GetAxis("Mouse X") : 0f;
+        float mouseY = _mouseLookEnabled ? Input.GetAxis("Mouse Y") : 0f;
         _yaw += mouseX * mouseSensitivity * Time.deltaTime;
         _pitch -= mouseY * mouseSensitivity * Time.deltaTime;
         _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
@@ -95,4 +96,7 @@ public class FollowCamera : MonoBehaviour
             transform.rotation = rotation;
         }
     }
+
+    /// <summary>教程模式：是否允许鼠标旋转视角。</summary>
+    public void SetMouseLookAllowed(bool enabled) => _mouseLookEnabled = enabled;
 }

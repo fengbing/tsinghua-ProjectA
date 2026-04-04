@@ -63,6 +63,8 @@ public class PlaneController : MonoBehaviour
     Rigidbody _rb;
     DroneGripper _gripper;
     bool _inputEnabled = true;
+    bool _boostEnabled = true;
+    bool _verticalEnabled = true;
     float _targetAltitude;
     Vector3 _lockedPosition;
     bool _isLockedHover;
@@ -120,8 +122,11 @@ public class PlaneController : MonoBehaviour
         float z = Input.GetAxisRaw("Vertical");   // W/S
 
         float y = 0f;
-        if (Input.GetKey(KeyCode.Space)) y += 1f;
-        if (Input.GetKey(KeyCode.LeftControl)) y -= 1f;
+        if (_verticalEnabled)
+        {
+            if (Input.GetKey(KeyCode.Space)) y += 1f;
+            if (Input.GetKey(KeyCode.LeftControl)) y -= 1f;
+        }
 
         Vector3 localInput = new Vector3(x, y * verticalSpeedMultiplier, z);
         _lastLocalInput = localInput;
@@ -165,7 +170,7 @@ public class PlaneController : MonoBehaviour
         }
 
         float effectiveMaxSpeed =
-            Input.GetMouseButton(1) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
+            _boostEnabled && Input.GetMouseButton(1) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
         Vector3 inputClamped = localInput;
         float inputMag = inputClamped.magnitude;
         if (inputMag > 1f)
@@ -302,6 +307,12 @@ public class PlaneController : MonoBehaviour
 
     /// <summary>输入是否启用。</summary>
     public bool IsInputEnabled => _inputEnabled;
+
+    /// <summary>教程模式：是否允许右键加速。</summary>
+    public void SetBoostAllowed(bool allowed) => _boostEnabled = allowed;
+
+    /// <summary>教程模式：是否允许垂直移动（空格/Ctrl）。</summary>
+    public void SetVerticalEnabled(bool enabled) => _verticalEnabled = enabled;
 
     /// <summary>重置位置与速度。</summary>
     public void ResetTo(Vector3 position, Quaternion rotation)
