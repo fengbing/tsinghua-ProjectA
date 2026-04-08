@@ -16,10 +16,6 @@ public class TutorialInputRestriction : MonoBehaviour
     bool _allowBoost = true;
     bool _allowMouseLook = true;
 
-    bool _prevSpace;
-    bool _prevCtrl;
-    bool _prevRmb;
-
     void Awake()
     {
         Instance = this;
@@ -36,7 +32,7 @@ public class TutorialInputRestriction : MonoBehaviour
     /// 设置当前阶段的输入限制。
     /// </summary>
     /// <param name="allowVertical">是否允许空格/Ctrl 垂直移动</param>
-    /// <param name="allowBoost">是否允许鼠标右键加速</param>
+    /// <param name="allowBoost">是否允许通过方向键蓄力达到峰值速度</param>
     /// <param name="allowMouseLook">是否允许鼠标旋转视角</param>
     public void SetRestriction(bool allowVertical, bool allowBoost, bool allowMouseLook)
     {
@@ -56,7 +52,7 @@ public class TutorialInputRestriction : MonoBehaviour
 
     /// <summary>
     /// 返回被限制后的垂直输入值（-1 到 1）。
-    /// TutorialRing 在检测加速时也需要用这个来查询右键状态。
+    /// 仅用于读取垂直键；水平加速判定请用 <see cref="PlaneController.IsFullMovementAccelerationActive"/>。
     /// </summary>
     public float GetVerticalInput()
     {
@@ -68,16 +64,17 @@ public class TutorialInputRestriction : MonoBehaviour
     }
 
     /// <summary>
-    /// 返回右键加速是否被允许。
+    /// 返回峰值速度（蓄力满速）是否被教程允许。
     /// </summary>
     public bool IsBoostAllowed() => _allowBoost;
 
     /// <summary>
-    /// 返回当前右键是否按下且被允许。
+    /// 与金色光圈检测一致：允许峰值、有平面方向输入、且蓄力进度已满。
     /// </summary>
     public bool IsBoosting()
     {
         if (!_allowBoost) return false;
-        return Input.GetMouseButton(1);
+        if (_planeController == null) return false;
+        return _planeController.IsFullMovementAccelerationActive();
     }
 }

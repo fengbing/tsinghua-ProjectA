@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -23,6 +24,16 @@ public class SceneEntryOneShotAudio : MonoBehaviour
     [SerializeField] bool persistAcrossAppLaunches;
     [Tooltip("自定义去重键；多个物体可共键以共用「只播一次」。留空则用「场景名 + 剪辑名」")]
     [SerializeField] string customDedupeKey;
+    [Header("系统对话（可选）")]
+    [SerializeField] bool autoAttachSceneEntryDialog = true;
+    [TextArea(2, 5)]
+    [SerializeField] string dialogText = "系统提示：欢迎进入场景。";
+    [SerializeField] AudioClip dialogVoiceClip;
+    [SerializeField] float dialogDelaySeconds;
+    [SerializeField] TMP_FontAsset dialogFont;
+    [SerializeField] int dialogFontSize;
+    [SerializeField] bool dialogAutoFitTextToVoiceEnd = true;
+    [SerializeField] float dialogExtraSecondsAfterVoice = 1f;
 
     void Awake()
     {
@@ -36,6 +47,21 @@ public class SceneEntryOneShotAudio : MonoBehaviour
         audioSource.playOnAwake = false;
         audioSource.loop = false;
         audioSource.spatialBlend = 0f;
+
+        if (autoAttachSceneEntryDialog)
+        {
+            var trigger = GetComponent<SceneEntryDialogTrigger>();
+            if (trigger == null)
+                trigger = gameObject.AddComponent<SceneEntryDialogTrigger>();
+            trigger.ConfigureDefaults(
+                dialogText,
+                dialogVoiceClip,
+                dialogDelaySeconds,
+                dialogFont,
+                dialogFontSize,
+                dialogAutoFitTextToVoiceEnd,
+                dialogExtraSecondsAfterVoice);
+        }
     }
 
     void Start()

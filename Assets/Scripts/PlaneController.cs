@@ -9,8 +9,22 @@ public class PlaneController : MonoBehaviour
 {
     [Header("移动手感")]
     [SerializeField] float maxSpeed = 16f;
-    [Tooltip("按住鼠标右键时的速度倍数")]
+    [Tooltip("方向键蓄满后相对 maxSpeed 的峰值倍数（约 2 秒内从 maxSpeed 线性爬升到此峰值）")]
     [SerializeField] float boostSpeedMultiplier = 1.8f;
+    [Header("方向键蓄力加速")]
+    [Tooltip("按住 A/D/W/S（水平面输入）时，从基础最大速度线性爬到峰值所需秒数")]
+    [SerializeField] float boostRampDuration = 2f;
+    [Tooltip("蓄力过程中播放；达到最高速后由「最高速循环」接管（若未指定则满速后静音）")]
+    [SerializeField] AudioClip accelerationAudioClip;
+    [Tooltip("达到最高速后循环播放，直到松开方向键；留空则满速后停止音效")]
+    [SerializeField] AudioClip maxSpeedLoopAudioClip;
+    [Tooltip("留空则使用本物体上的 AudioSource；若仍为空且已指定任一 clip，则运行时自动添加 AudioSource")]
+    [SerializeField] AudioSource accelerationAudioSource;
+    [Header("满速转向音效")]
+    [Tooltip("仅在蓄力已满（峰值速度）时：从「未按 A/D」到「按下」的边缘触发；D=正放，A=同一段倒放")]
+    [SerializeField] AudioClip maxSpeedTurnAudioClip;
+    [Tooltip("独立音源，避免打断加速/巡航循环；留空则自动使用第二个 AudioSource")]
+    [SerializeField] AudioSource maxSpeedTurnAudioSource;
     [SerializeField] float acceleration = 28f;
     [SerializeField] float braking = 52f;
     [SerializeField] float drag = 1.2f;
@@ -60,11 +74,24 @@ public class PlaneController : MonoBehaviour
     [Tooltip("勾选后：按 D 时左倾、按 A 时右倾，用于修正不同模型的倾斜方向")]
     [SerializeField] bool invertTiltDirection = false;
 
+    [Header("高速侧向模糊（内置管线）")]
+    [Tooltip("主相机需挂 CameraSpeedSideBlur，使用 OnRenderImage 后处理")]
+    [SerializeField] bool driveSpeedSideBlur = true;
+    [SerializeField, Range(0f, 2f)] float speedSideBlurScale = 1f;
+
     Rigidbody _rb;
     DroneGripper _gripper;
     bool _inputEnabled = true;
+    bool _autocruiseDriving;
+    /// <summary>与 GetAxisRaw 同量级：本地 x=右, z=前, y=垂直（[-1,1]，再乘 verticalSpeedMultiplier）。</summary>
+    Vector3 _autocruiseAxesRaw;
     bool _boostEnabled = true;
     bool _verticalEnabled = true;
+    float _planarBoostRamp01;
+    bool _lastPlanarMovementActive;
+    AudioSource _resolvedAccelerationAudioSource;
+    AudioSource _resolvedTurnAudioSource;
+    float _prevHorizontalForTurnSfx;
     float _targetAltitude;
     Vector3 _lockedPosition;
     bool _isLockedHover;
@@ -98,11 +125,126 @@ public class PlaneController : MonoBehaviour
             cameraTransform = Camera.main.transform;
 
         _gripper = GetComponentInChildren<DroneGripper>();
+        ResolveAccelerationAudioSource();
+        ResolveTurnAudioSource();
+    }
+
+    void OnDisable()
+    {
+        if (driveSpeedSideBlur)
+            SpeedSideBlurGlobals.Intensity = 0f;
+    }
+
+    void ResolveAccelerationAudioSource()
+    {
+        _resolvedAccelerationAudioSource = accelerationAudioSource;
+        if (_resolvedAccelerationAudioSource == null)
+            _resolvedAccelerationAudioSource = GetComponent<AudioSource>();
+        if (_resolvedAccelerationAudioSource == null &&
+            (accelerationAudioClip != null || maxSpeedLoopAudioClip != null))
+        {
+            _resolvedAccelerationAudioSource = gameObject.AddComponent<AudioSource>();
+            _resolvedAccelerationAudioSource.playOnAwake = false;
+        }
+    }
+
+    void ResolveTurnAudioSource()
+    {
+        if (maxSpeedTurnAudioClip == null)
+        {
+            _resolvedTurnAudioSource = null;
+            return;
+        }
+
+        _resolvedTurnAudioSource = maxSpeedTurnAudioSource;
+        if (_resolvedTurnAudioSource == _resolvedAccelerationAudioSource)
+            _resolvedTurnAudioSource = null;
+
+        if (_resolvedTurnAudioSource == null)
+        {
+            foreach (var s in GetComponents<AudioSource>())
+            {
+                if (s != _resolvedAccelerationAudioSource)
+                {
+                    _resolvedTurnAudioSource = s;
+                    break;
+                }
+            }
+        }
+
+        if (_resolvedTurnAudioSource == null)
+        {
+            _resolvedTurnAudioSource = gameObject.AddComponent<AudioSource>();
+            _resolvedTurnAudioSource.playOnAwake = false;
+        }
+    }
+
+    void MaybePlayMaxSpeedTurnEdge(float horizontalRaw)
+    {
+        if (maxSpeedTurnAudioClip == null || _resolvedTurnAudioSource == null)
+            return;
+        if (!_boostEnabled || _planarBoostRamp01 < 1f - 1e-4f)
+            return;
+
+        float dz = horizontalDeadzone;
+        bool nowRight = horizontalRaw > dz;
+        bool nowLeft = horizontalRaw < -dz;
+        bool prevRight = _prevHorizontalForTurnSfx > dz;
+        bool prevLeft = _prevHorizontalForTurnSfx < -dz;
+
+        if (nowRight && !prevRight)
+            PlayMaxSpeedTurnSfx(rightTurn: true);
+        else if (nowLeft && !prevLeft)
+            PlayMaxSpeedTurnSfx(rightTurn: false);
+    }
+
+    void PlayMaxSpeedTurnSfx(bool rightTurn)
+    {
+        if (maxSpeedTurnAudioClip == null || _resolvedTurnAudioSource == null)
+            return;
+
+        AudioSource src = _resolvedTurnAudioSource;
+        src.Stop();
+        src.clip = maxSpeedTurnAudioClip;
+        src.loop = false;
+        float len = maxSpeedTurnAudioClip.length;
+        if (len <= 0f)
+            return;
+
+        if (rightTurn)
+        {
+            src.pitch = 1f;
+            src.time = 0f;
+        }
+        else
+        {
+            src.pitch = -1f;
+            src.time = Mathf.Max(len - 0.0001f, 0f);
+        }
+
+        src.Play();
+    }
+
+    void StopTurnSfxAudio()
+    {
+        if (_resolvedTurnAudioSource == null)
+            return;
+        if (_resolvedTurnAudioSource.isPlaying)
+            _resolvedTurnAudioSource.Stop();
+        _resolvedTurnAudioSource.pitch = 1f;
     }
 
     void FixedUpdate()
     {
-        if (!_inputEnabled) return;
+        if (!_inputEnabled && !_autocruiseDriving)
+        {
+            _planarBoostRamp01 = 0f;
+            _lastPlanarMovementActive = false;
+            _prevHorizontalForTurnSfx = 0f;
+            StopAccelerationAudio();
+            StopTurnSfxAudio();
+            return;
+        }
 
         bool holding = _gripper != null && _gripper.IsHolding;
         // 关键：为了保证“抓取后仍有碰撞反馈”，我们始终保持 Rigidbody 为动态刚体。
@@ -118,22 +260,52 @@ public class PlaneController : MonoBehaviour
         _rb.drag = _baseDrag * dragNoOp;
         _rb.angularDrag = _baseAngularDrag * angularDragNoOp;
 
-        float x = Input.GetAxisRaw("Horizontal"); // A/D
-        float z = Input.GetAxisRaw("Vertical");   // W/S
-
+        float x;
+        float z;
         float y = 0f;
-        if (_verticalEnabled)
+
+        if (_inputEnabled)
         {
-            if (Input.GetKey(KeyCode.Space)) y += 1f;
-            if (Input.GetKey(KeyCode.LeftControl)) y -= 1f;
+            x = Input.GetAxisRaw("Horizontal"); // A/D
+            z = Input.GetAxisRaw("Vertical");   // W/S
+            if (_verticalEnabled)
+            {
+                if (Input.GetKey(KeyCode.Space)) y += 1f;
+                if (Input.GetKey(KeyCode.LeftControl)) y -= 1f;
+            }
         }
+        else if (_autocruiseDriving)
+        {
+            x = _autocruiseAxesRaw.x;
+            z = _autocruiseAxesRaw.z;
+            if (_verticalEnabled)
+                y = Mathf.Clamp(_autocruiseAxesRaw.y, -1f, 1f);
+        }
+        else
+        {
+            x = 0f;
+            z = 0f;
+        }
+
+        bool planarMovementActive =
+            Mathf.Abs(x) >= horizontalDeadzone ||
+            Mathf.Abs(z) >= horizontalDeadzone ||
+            _autocruiseDriving;
+
+        _lastPlanarMovementActive = planarMovementActive;
 
         Vector3 localInput = new Vector3(x, y * verticalSpeedMultiplier, z);
         _lastLocalInput = localInput;
         bool isIdle =
+            !_autocruiseDriving &&
             Mathf.Abs(x) < horizontalDeadzone &&
             Mathf.Abs(z) < horizontalDeadzone &&
             Mathf.Abs(y) < verticalDeadzone;
+
+        UpdatePlanarBoostRamp(planarMovementActive);
+        float effectiveMaxSpeed = ComputeEffectiveMaxSpeed();
+
+        MaybePlayMaxSpeedTurnEdge(x);
 
         bool lockHoverNow = holdAltitudeWhenIdle && isIdle;
         if (lockHoverNow)
@@ -169,8 +341,6 @@ public class PlaneController : MonoBehaviour
             }
         }
 
-        float effectiveMaxSpeed =
-            _boostEnabled && Input.GetMouseButton(1) ? maxSpeed * boostSpeedMultiplier : maxSpeed;
         Vector3 inputClamped = localInput;
         float inputMag = inputClamped.magnitude;
         if (inputMag > 1f)
@@ -275,10 +445,97 @@ public class PlaneController : MonoBehaviour
                 _rb.MoveRotation(newRot);
             }
         }
+
+        _prevHorizontalForTurnSfx = x;
+    }
+
+    void UpdatePlanarBoostRamp(bool planarActive)
+    {
+        if (!planarActive)
+        {
+            _planarBoostRamp01 = 0f;
+            StopAccelerationAudio();
+            return;
+        }
+
+        if (!_boostEnabled)
+        {
+            _planarBoostRamp01 = 0f;
+            StopAccelerationAudio();
+            return;
+        }
+
+        float dur = Mathf.Max(0.01f, boostRampDuration);
+        _planarBoostRamp01 = Mathf.Min(1f, _planarBoostRamp01 + Time.fixedDeltaTime / dur);
+        SyncAccelerationAudio();
+    }
+
+    float ComputeEffectiveMaxSpeed()
+    {
+        if (!_boostEnabled)
+            return maxSpeed;
+        float peak = maxSpeed * boostSpeedMultiplier;
+        return Mathf.Lerp(maxSpeed, peak, _planarBoostRamp01);
+    }
+
+    void SyncAccelerationAudio()
+    {
+        if (_resolvedAccelerationAudioSource == null)
+            return;
+
+        const float rampEps = 1e-4f;
+        bool atFullRamp = _planarBoostRamp01 >= 1f - rampEps;
+        AudioSource src = _resolvedAccelerationAudioSource;
+
+        if (!atFullRamp)
+        {
+            if (accelerationAudioClip == null)
+            {
+                StopAccelerationAudio();
+                return;
+            }
+
+            if (!src.isPlaying || src.clip != accelerationAudioClip)
+            {
+                src.Stop();
+                src.clip = accelerationAudioClip;
+                src.loop = true;
+                src.Play();
+            }
+
+            return;
+        }
+
+        if (maxSpeedLoopAudioClip == null)
+        {
+            StopAccelerationAudio();
+            return;
+        }
+
+        if (!src.isPlaying || src.clip != maxSpeedLoopAudioClip)
+        {
+            src.Stop();
+            src.clip = maxSpeedLoopAudioClip;
+            src.loop = true;
+            src.Play();
+        }
+    }
+
+    void StopAccelerationAudio()
+    {
+        if (_resolvedAccelerationAudioSource == null)
+            return;
+        if (_resolvedAccelerationAudioSource.isPlaying)
+            _resolvedAccelerationAudioSource.Stop();
     }
 
     void LateUpdate()
     {
+        if (driveSpeedSideBlur)
+            SpeedSideBlurGlobals.Intensity = Mathf.Clamp01(SpeedBlurAmount * speedSideBlurScale);
+        else
+            SpeedSideBlurGlobals.Intensity = 0f;
+
         if (visualTransform == null) return;
 
         // 基于输入方向做无人机式倾斜（仅影响模型外观，不影响物理）
@@ -305,14 +562,41 @@ public class PlaneController : MonoBehaviour
     /// <summary>禁用输入（如 Game Over 时）。</summary>
     public void SetInputEnabled(bool enabled) => _inputEnabled = enabled;
 
+    /// <summary>自动巡航：在 <see cref="SetInputEnabled"/>(false) 时仍驱动本组件物理（蓄力、音效与手动一致）。</summary>
+    public void SetAutocruiseActive(bool active)
+    {
+        _autocruiseDriving = active;
+        if (!active)
+            _autocruiseAxesRaw = Vector3.zero;
+    }
+
+    /// <summary>每帧设置巡航「虚拟摇杆」：无人机局部空间，x 右、z 前、y 爬升（-1~1）。</summary>
+    public void SetAutocruiseAxes(Vector3 localAxesRaw)
+    {
+        _autocruiseAxesRaw = localAxesRaw;
+    }
+
     /// <summary>输入是否启用。</summary>
     public bool IsInputEnabled => _inputEnabled;
 
-    /// <summary>教程模式：是否允许右键加速。</summary>
+    /// <summary>教程模式：是否允许通过方向键蓄力达到峰值速度。</summary>
     public void SetBoostAllowed(bool allowed) => _boostEnabled = allowed;
 
     /// <summary>教程模式：是否允许垂直移动（空格/Ctrl）。</summary>
     public void SetVerticalEnabled(bool enabled) => _verticalEnabled = enabled;
+
+    /// <summary>上一物理帧是否有水平面移动输入（A/D/W/S 超出死区）。</summary>
+    public bool IsPlanarMovementActive => _lastPlanarMovementActive;
+
+    /// <summary>蓄力进度是否已达满（可视为“满加速”状态）。</summary>
+    public bool IsBoostRampComplete => _planarBoostRamp01 >= 1f - 1e-4f;
+
+    /// <summary>金色光圈等：同时满足允许峰值、有平面输入、且蓄力已满。</summary>
+    public bool IsFullMovementAccelerationActive() =>
+        _boostEnabled && _lastPlanarMovementActive && IsBoostRampComplete;
+
+    /// <summary>用于侧向模糊等：蓄力进度 0~1（未允许峰值时为 0）。</summary>
+    public float SpeedBlurAmount => _boostEnabled ? _planarBoostRamp01 : 0f;
 
     /// <summary>重置位置与速度。</summary>
     public void ResetTo(Vector3 position, Quaternion rotation)
@@ -328,6 +612,13 @@ public class PlaneController : MonoBehaviour
         _targetAltitude = position.y;
         _lockedPosition = position;
         _isLockedHover = false;
+        _planarBoostRamp01 = 0f;
+        _lastPlanarMovementActive = false;
+        _prevHorizontalForTurnSfx = 0f;
+        StopAccelerationAudio();
+        StopTurnSfxAudio();
+        _autocruiseDriving = false;
+        _autocruiseAxesRaw = Vector3.zero;
         _rb.useGravity = !hoverDroneMode;
     }
 }

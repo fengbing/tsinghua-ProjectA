@@ -42,6 +42,13 @@ public class TutorialManager : MonoBehaviour
     [SerializeField] TutorialRing[] allRings;
     [SerializeField] TutorialHud hud;
     [SerializeField] TutorialInputRestriction inputRestriction;
+    [SerializeField] SystemDialogController systemDialog;
+
+    [Header("系统对话语音（可选）")]
+    [SerializeField] AudioClip introVoiceClip;
+    [SerializeField] AudioClip phase2VoiceClip;
+    [SerializeField] AudioClip phase3VoiceClip;
+    [SerializeField] AudioClip completedVoiceClip;
 
     [Header("阶段过渡等待时间")]
     [SerializeField] float transitionDelay = 2.5f;
@@ -78,6 +85,7 @@ public class TutorialManager : MonoBehaviour
     {
         if (hud == null) hud = FindObjectOfType<TutorialHud>();
         if (inputRestriction == null) inputRestriction = FindObjectOfType<TutorialInputRestriction>();
+        if (systemDialog == null) systemDialog = FindObjectOfType<SystemDialogController>();
 
         SubscribeToRings();
         StartTutorial();
@@ -125,7 +133,7 @@ public class TutorialManager : MonoBehaviour
             {
                 phase = TutorialPhase.Phase3_Full,
                 phaseName = "第三阶段：完整赛道",
-                hintText = "通过所有光圈，金色光圈需要加速",
+                hintText = "通过所有光圈，金色光圈需按住方向键蓄满加速",
                 ringHintTexts = new[] { "①", "②", "③", "④", "⑤" },
                 ringIndices = new List<int> { 5, 6, 7, 8, 9 }
             };
@@ -161,6 +169,7 @@ public class TutorialManager : MonoBehaviour
         ActivateRingsForPhase();
         Debug.Log($"[Tutorial] StartTutorial，hud={(hud != null ? "非空" : "null")}，config ringIndices={CurrentConfig?.ringIndices?.Count}");
         hud?.ShowPhase(CurrentConfig);
+        PlayDialogForPhase(_currentPhase, false);
     }
 
     void ApplyInputRestriction()
@@ -262,6 +271,7 @@ public class TutorialManager : MonoBehaviour
         ActivateRingsForPhase();
         Debug.Log($"[Tutorial] CompleteTransition，hud={(hud != null ? "非空" : "null")}，config ringIndices={CurrentConfig?.ringIndices?.Count}");
         hud?.ShowPhase(CurrentConfig);
+        PlayDialogForPhase(_currentPhase, true);
     }
 
     void CompleteTutorial()
@@ -269,6 +279,48 @@ public class TutorialManager : MonoBehaviour
         _state = TutorialState.Completed;
         inputRestriction?.SetRestriction(true, true, true);
         hud?.ShowCompleted();
+        PlayCompleteDialog();
+    }
+
+    void PlayDialogForPhase(TutorialPhase phase, bool fromTransition)
+    {
+        if (systemDialog == null)
+            return;
+
+        string lineText = phase switch
+        {
+            TutorialPhase.Phase1_WASD => "系统提示：第一阶段开始，使用 WASD 移动无人机。",
+            TutorialPhase.Phase2_Vertical => "系统提示：第二阶段开始，使用空格上升与 Ctrl 下降。",
+            TutorialPhase.Phase3_Full => "系统提示：第三阶段开始，按顺序通过全部光圈。",
+            _ => "系统提示：阶段开始。"
+        };
+
+        if (fromTransition)
+            lineText = "系统提示：准备进入下一阶段。 " + lineText;
+
+        var voice = phase switch
+        {
+            TutorialPhase.Phase1_WASD => introVoiceClip,
+            TutorialPhase.Phase2_Vertical => phase2VoiceClip,
+            TutorialPhase.Phase3_Full => phase3VoiceClip,
+            _ => null
+        };
+
+        systemDialog.PlayDialog(new List<SystemDialogLine>
+        {
+            new() { text = lineText, voiceClip = voice, characterInterval = 0.035f }
+        });
+    }
+
+    void PlayCompleteDialog()
+    {
+        if (systemDialog == null)
+            return;
+
+        systemDialog.PlayDialog(new List<SystemDialogLine>
+        {
+            new() { text = "系统提示：教学完成，祝你执行任务顺利。", voiceClip = completedVoiceClip, characterInterval = 0.035f }
+        });
     }
 
     /// <summary>重新开始教学关卡</summary>

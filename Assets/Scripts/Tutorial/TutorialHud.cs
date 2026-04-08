@@ -122,7 +122,7 @@ public class TutorialHud : MonoBehaviour
     {
         if (feedbackText != null)
         {
-            feedbackText.text = "需要按住右键加速!";
+            feedbackText.text = "请按住方向键蓄满加速（约2秒）!";
             feedbackText.gameObject.SetActive(true);
         }
         _feedbackTimer = feedbackDisplayDuration;
