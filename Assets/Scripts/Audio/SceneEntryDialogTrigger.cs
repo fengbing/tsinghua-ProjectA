@@ -3,7 +3,8 @@ using TMPro;
 using UnityEngine;
 
 /// <summary>
-/// 场景进入时触发一段系统对话，可选整局只触发一次。
+/// 场景进入时触发系统对话，可选整局只触发一次。
+/// 支持单句兼容模式，也支持多句顺序播放（例如 7 段语音）。
 /// </summary>
 public class SceneEntryDialogTrigger : MonoBehaviour
 {
@@ -20,6 +21,9 @@ public class SceneEntryDialogTrigger : MonoBehaviour
     [SerializeField] float extraSecondsAfterVoice = 1f;
     [SerializeField] TMP_FontAsset enterFont;
     [SerializeField] int enterFontSize;
+    [Space(8)]
+    [Tooltip("多句模式：按列表顺序播放。为空时回退到上面的单句配置。")]
+    [SerializeField] List<SystemDialogLine> enterLines = new();
 
     [Header("Play Control")]
     [SerializeField] float delaySeconds;
@@ -65,24 +69,63 @@ public class SceneEntryDialogTrigger : MonoBehaviour
     {
         if (systemDialog == null)
             systemDialog = FindObjectOfType<SystemDialogController>();
-        if (systemDialog == null || string.IsNullOrWhiteSpace(enterText))
+        if (systemDialog == null)
+            return;
+
+        List<SystemDialogLine> linesToPlay = BuildLinesToPlay();
+        if (linesToPlay.Count == 0)
             return;
         systemDialog.ApplyTextStyle(enterFont, enterFontSize);
-
-        float interval = characterInterval;
-        if (autoFitTextToVoiceEnd && enterVoice != null && enterText.Length > 0)
-        {
-            float totalDuration = enterVoice.length + Mathf.Max(0f, extraSecondsAfterVoice);
-            interval = Mathf.Max(0.005f, totalDuration / enterText.Length);
-        }
-
-        systemDialog.PlayDialog(new List<SystemDialogLine>
-        {
-            new() { text = enterText, voiceClip = enterVoice, characterInterval = interval }
-        });
+        systemDialog.PlayDialog(linesToPlay);
 
         if (oncePerGameRun && !string.IsNullOrWhiteSpace(GetKey()))
             PlayedKeys.Add(GetKey());
+    }
+
+    List<SystemDialogLine> BuildLinesToPlay()
+    {
+        List<SystemDialogLine> result = new();
+
+        if (enterLines != null && enterLines.Count > 0)
+        {
+            foreach (var line in enterLines)
+            {
+                if (line == null || string.IsNullOrWhiteSpace(line.text))
+                    continue;
+
+                float interval = ResolveCharacterInterval(line.text, line.voiceClip, line.characterInterval);
+                result.Add(new SystemDialogLine
+                {
+                    text = line.text,
+                    voiceClip = line.voiceClip,
+                    characterInterval = interval
+                });
+            }
+
+            return result;
+        }
+
+        if (string.IsNullOrWhiteSpace(enterText))
+            return result;
+
+        result.Add(new SystemDialogLine
+        {
+            text = enterText,
+            voiceClip = enterVoice,
+            characterInterval = ResolveCharacterInterval(enterText, enterVoice, characterInterval)
+        });
+
+        return result;
+    }
+
+    float ResolveCharacterInterval(string text, AudioClip voice, float fallbackInterval)
+    {
+        float interval = fallbackInterval > 0f ? fallbackInterval : 0.04f;
+        if (!autoFitTextToVoiceEnd || voice == null || string.IsNullOrEmpty(text))
+            return interval;
+
+        float totalDuration = voice.length + Mathf.Max(0f, extraSecondsAfterVoice);
+        return Mathf.Max(0.005f, totalDuration / text.Length);
     }
 
     string GetKey()
