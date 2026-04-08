@@ -29,6 +29,30 @@ public class DecryptPuzzleUI : MonoBehaviour
     [Header("答对后显示的对象（答对前隐藏）")]
     [SerializeField] private GameObject[] objectsToShowOnSuccess;
 
+    [Header("音效")]
+    [SerializeField] private AudioSource ambientAudioSource;
+    [SerializeField] private AudioSource soundAudioSource;
+    [SerializeField] private AudioClip clipPanelOpen;
+    [SerializeField] private AudioClip clipAmbient;
+    [SerializeField] private AudioClip clipDigitInput;
+    [SerializeField] private AudioClip clipError;
+    [SerializeField] private AudioClip clipSuccess;
+    [SerializeField] private AudioClip clipBackspace;
+
+    [Header("音效起始偏移（秒）")]
+    [SerializeField] private float clipPanelOpenStartTime;
+    [SerializeField] private float clipDigitInputStartTime;
+    [SerializeField] private float clipErrorStartTime;
+    [SerializeField] private float clipSuccessStartTime;
+    [SerializeField] private float clipBackspaceStartTime;
+
+    [Header("音效音量（0-1）")]
+    [Range(0f, 1f)] [SerializeField] private float volumePanelOpen = 1f;
+    [Range(0f, 1f)] [SerializeField] private float volumeDigitInput = 1f;
+    [Range(0f, 1f)] [SerializeField] private float volumeError = 1f;
+    [Range(0f, 1f)] [SerializeField] private float volumeSuccess = 1f;
+    [Range(0f, 1f)] [SerializeField] private float volumeBackspace = 1f;
+
     public static DecryptPuzzleUI Instance { get; private set; }
 
     /// <summary>
@@ -117,8 +141,38 @@ public class DecryptPuzzleUI : MonoBehaviour
         }
     }
 
+    void PlayClipAtOffset(AudioClip clip, float startTime, float volume, AudioSource source = null)
+    {
+        AudioSource src = source ?? soundAudioSource;
+        if (clip == null || src == null) return;
+
+        float clampedTime = Mathf.Clamp(startTime, 0f, clip.length);
+        src.clip = clip;
+        src.time = clampedTime;
+        src.volume = volume;
+        src.loop = false;
+        src.Play();
+    }
+
+    void StartAmbient()
+    {
+        if (clipAmbient != null && ambientAudioSource != null)
+        {
+            ambientAudioSource.clip = clipAmbient;
+            ambientAudioSource.loop = true;
+            ambientAudioSource.Play();
+        }
+    }
+
+    void StopAmbient()
+    {
+        if (ambientAudioSource != null && ambientAudioSource.clip == clipAmbient && ambientAudioSource.isPlaying)
+            ambientAudioSource.Stop();
+    }
+
     void OnNumberPressed(int digit)
     {
+        PlayClipAtOffset(clipDigitInput, clipDigitInputStartTime, volumeDigitInput);
         puzzleSystem?.TryEnterDigit(digit);
     }
 
@@ -132,6 +186,7 @@ public class DecryptPuzzleUI : MonoBehaviour
 
     void OnBackspacePressed()
     {
+        PlayClipAtOffset(clipBackspace, clipBackspaceStartTime, volumeBackspace);
         if (puzzleSystem != null)
         {
             puzzleSystem.Backspace();
@@ -207,6 +262,10 @@ public class DecryptPuzzleUI : MonoBehaviour
     {
         Debug.Log("[UI] OnPuzzleSolved 被调用！");
 
+        StopAmbient();
+        PlayClipAtOffset(clipSuccess, clipSuccessStartTime, volumeSuccess);
+        Debug.Log($"[UI] 播放成功音效: clip={clipSuccess}, source={soundAudioSource}, time={clipSuccessStartTime}");
+
         // 立刻显示反馈
         ShowFeedback("取件码正确！");
 
@@ -239,6 +298,8 @@ public class DecryptPuzzleUI : MonoBehaviour
     {
         Debug.Log("[UI] HidePanelAndRestoreControl 被调用");
 
+        StopAmbient();
+
         // 隐藏面板
         if (panelRoot != null)
         {
@@ -259,6 +320,7 @@ public class DecryptPuzzleUI : MonoBehaviour
 
     void OnPuzzleFailed()
     {
+        PlayClipAtOffset(clipError, clipErrorStartTime, volumeError);
         ShowFeedback("取件码错误！");
         UpdateInputDisplay(0);
     }
@@ -281,6 +343,9 @@ public class DecryptPuzzleUI : MonoBehaviour
         {
             panelRoot.SetActive(true);
 
+            PlayClipAtOffset(clipPanelOpen, clipPanelOpenStartTime, volumePanelOpen);
+            StartAmbient();
+
             // 暂停游戏
             Time.timeScale = 0f;
 
@@ -300,6 +365,7 @@ public class DecryptPuzzleUI : MonoBehaviour
     public void Hide()
     {
         Debug.Log($"[UI] Hide 调用, panelRoot={panelRoot?.name}");
+        StopAmbient();
         if (panelRoot != null)
         {
             panelRoot.SetActive(false);

@@ -935,10 +935,21 @@ public class DroneGripper : MonoBehaviour
     public float HoldingMass => _holding != null && _holding.Rigidbody != null ? _holding.Rigidbody.mass : 0f;
 
     /// <summary>
+    /// 强制释放当前抓取的物体（配送流程阳台打开时由 DeliveryFKeyHandler 调用）。
+    /// </summary>
+    public void ForceRelease()
+    {
+        if (_holding != null)
+            BeginRelease();
+    }
+
+    /// <summary>
     /// GrabPoint 的中心点（用于 PlaneController 计算 FixedJoint 相对质心的偏移）。
     /// </summary>
-    public Vector3 GrabPointCenterWorld => GetGrabPointCenterWorld();
-
+    public Vector3 GrabPointCenterWorld
+    {
+        get { return GetGrabPointCenterWorld(); }
+    }
     /// <summary>
     /// 切换场景：卸开当前抓取后整场景替换（不保留旧场景无人机、包裹、相机）。
     /// 仍要求进入触发器时已抓着箱子，与 EffectTransition 原逻辑一致。
