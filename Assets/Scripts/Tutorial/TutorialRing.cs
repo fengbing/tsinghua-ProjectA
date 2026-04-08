@@ -15,7 +15,7 @@ public class TutorialRing : MonoBehaviour
     [Tooltip("所属阶段：0=基础悬停，1=垂直控制，2=完整赛道")]
     public int phase;
 
-    [Tooltip("是否必须按住右键加速才能通过")]
+    [Tooltip("是否必须方向键蓄满加速（约 2 秒）才能通过")]
     public bool requiresBoost;
 
     [Tooltip("通过的最小速度阈值")]
@@ -79,11 +79,9 @@ public class TutorialRing : MonoBehaviour
             return;
         }
 
-        bool boosting = TutorialInputRestriction.Instance != null
-            ? TutorialInputRestriction.Instance.IsBoosting()
-            : Input.GetMouseButton(1);
+        bool fullAcceleration = plane.IsFullMovementAccelerationActive();
 
-        if (requiresBoost && !boosting)
+        if (requiresBoost && !fullAcceleration)
         {
             TutorialHud hud = FindObjectOfType<TutorialHud>();
             hud?.ShowBoostRequired();

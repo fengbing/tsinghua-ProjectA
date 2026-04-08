@@ -26,11 +26,17 @@ public class FollowCamera : MonoBehaviour
     [SerializeField] Vector3 firstPersonOffset = new Vector3(0f, 0.3f, 0.5f);
     [SerializeField] float firstPersonSmoothTime = 0.05f;
 
+    [Header("自动巡航视角辅助")]
+    [Tooltip("巡航时水平视角转向下一航点；在鼠标输入之后叠加，仍可用鼠标微调")]
+    [SerializeField] float cruiseLookAssistDegreesPerSecond = 90f;
+
     Vector3 _vel;
     float _yaw;
     float _pitch;
     bool _firstPersonMode;
     bool _mouseLookEnabled = true;
+    bool _autocruiseLookAssist;
+    Vector3 _autocruiseLookWorldPoint;
 
     void Start()
     {
@@ -80,6 +86,23 @@ public class FollowCamera : MonoBehaviour
         _pitch -= mouseY * mouseSensitivity * Time.deltaTime;
         _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
 
+        if (_autocruiseLookAssist && target != null)
+        {
+            Vector3 to = Vector3.ProjectOnPlane(_autocruiseLookWorldPoint - target.position, Vector3.up);
+            if (to.sqrMagnitude > 0.01f)
+            {
+                Vector3 wantH = to.normalized;
+                Vector3 camH = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+                if (camH.sqrMagnitude > 0.0001f)
+                {
+                    camH.Normalize();
+                    float signed = Vector3.SignedAngle(camH, wantH, Vector3.up);
+                    float step = cruiseLookAssistDegreesPerSecond * Time.deltaTime;
+                    _yaw += Mathf.Clamp(signed, -step, step);
+                }
+            }
+        }
+
         Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0f);
 
         if (_firstPersonMode)
@@ -99,4 +122,11 @@ public class FollowCamera : MonoBehaviour
 
     /// <summary>教程模式：是否允许鼠标旋转视角。</summary>
     public void SetMouseLookAllowed(bool enabled) => _mouseLookEnabled = enabled;
+
+    /// <summary>自动巡航：水平方向把视角转向世界坐标点（与鼠标叠加）。</summary>
+    public void SetAutocruiseLookAssist(bool active, Vector3 worldPoint)
+    {
+        _autocruiseLookAssist = active;
+        _autocruiseLookWorldPoint = worldPoint;
+    }
 }
