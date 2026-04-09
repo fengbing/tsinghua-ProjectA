@@ -28,6 +28,10 @@ public class PlaneGameNarrativeDirector : MonoBehaviour
     [Header("过场")]
     [SerializeField] string nextSceneName = "Level 2";
 
+    [Header("配送流程")]
+    [Tooltip("留空则不启动配送流程（仅用于测试）；填入则在此脚本触发近距音效时同步启动配送")]
+    [SerializeField] DeliveryPhaseManager deliveryPhaseManager;
+
     bool _proximityCuePlayed;
     bool _wasInsideProximity;
     bool _outroStarted;
@@ -101,6 +105,8 @@ public class PlaneGameNarrativeDirector : MonoBehaviour
         }
         if (proximityStinger != null && voiceSource != null)
             voiceSource.PlayOneShot(proximityStinger);
+        if (deliveryPhaseManager != null)
+            deliveryPhaseManager.StartDeliveryFlow();
     }
 
     /// <summary>由放置检测（触发区等）在投递成功时调用。</summary>

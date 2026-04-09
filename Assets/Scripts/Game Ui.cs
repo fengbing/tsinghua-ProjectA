@@ -26,6 +26,22 @@ public class GameUi : MonoBehaviour
     [SerializeField] private Image radialFillImage;
     [SerializeField] private float showDuration = 0.5f;
 
+    [Header("信号增强音效")]
+    [Tooltip("无人机信号增强时播放的音效")]
+    [SerializeField] private AudioClip signalUpClip;
+    [Tooltip("信号增强音效的音量（0~1）")]
+    [Range(0f, 1f)][SerializeField] private float signalUpVolume = 1f;
+    [Tooltip("信号增强音效从第几秒开始播放")]
+    [SerializeField] private float signalUpStartTime = 0f;
+
+    [Header("电量耗尽音效")]
+    [Tooltip("无人机电量耗尽时播放的音效")]
+    [SerializeField] private AudioClip powerDepletedClip;
+    [Tooltip("电量耗尽音效的音量（0~1）")]
+    [Range(0f, 1f)][SerializeField] private float powerDepletedVolume = 1f;
+    [Tooltip("电量耗尽音效从第几秒开始播放")]
+    [SerializeField] private float powerDepletedStartTime = 0f;
+
     private bool isUiVisible = false;
     private int currentPowerLevel = 4;
     private float timer = 0f;
@@ -34,6 +50,9 @@ public class GameUi : MonoBehaviour
     private GameObject[] signalObjects;
     private bool isFirstPerson = false;
     private Coroutine showCoroutine;
+    private AudioSource _audioSource;
+    private int _lastSignalLevel = -1;
+    private bool _powerDepletedPlayed = false;
 
     void Start()
     {
@@ -58,6 +77,12 @@ public class GameUi : MonoBehaviour
         InitializePowerDisplay();
         InitializeSignalDisplay();
         countdownStarted = true;
+
+        _audioSource = GetComponent<AudioSource>();
+        if (_audioSource == null)
+            _audioSource = gameObject.AddComponent<AudioSource>();
+        _audioSource.playOnAwake = false;
+        _lastSignalLevel = -1;
     }
 
     void Update()
@@ -163,6 +188,12 @@ public class GameUi : MonoBehaviour
         float distance = Vector3.Distance(plane.position, destination.position);
         int signalLevel = GetSignalLevel(distance);
 
+        if (signalLevel > _lastSignalLevel && _lastSignalLevel != -1)
+        {
+            PlaySignalUpEffect();
+        }
+        _lastSignalLevel = signalLevel;
+
         for (int i = 0; i < signalObjects.Length; i++)
         {
             if (signalObjects[i] != null)
@@ -234,6 +265,7 @@ public class GameUi : MonoBehaviour
 
             if (currentPowerLevel == 0)
             {
+                PlayPowerDepletedEffect();
                 EndGame();
             }
         }
@@ -243,6 +275,30 @@ public class GameUi : MonoBehaviour
     {
         countdownStarted = false;
         Debug.Log("游戏结束！");
+    }
+
+    private void PlaySignalUpEffect()
+    {
+        if (signalUpClip == null || _audioSource == null) return;
+        float clampedTime = Mathf.Clamp(signalUpStartTime, 0f, signalUpClip.length);
+        _audioSource.clip = signalUpClip;
+        _audioSource.time = clampedTime;
+        _audioSource.volume = signalUpVolume;
+        _audioSource.loop = false;
+        _audioSource.Play();
+    }
+
+    private void PlayPowerDepletedEffect()
+    {
+        if (powerDepletedClip == null || _audioSource == null) return;
+        if (_powerDepletedPlayed) return;
+        _powerDepletedPlayed = true;
+        float clampedTime = Mathf.Clamp(powerDepletedStartTime, 0f, powerDepletedClip.length);
+        _audioSource.clip = powerDepletedClip;
+        _audioSource.time = clampedTime;
+        _audioSource.volume = powerDepletedVolume;
+        _audioSource.loop = false;
+        _audioSource.Play();
     }
 
     public void SetTimeInterval(float interval)
