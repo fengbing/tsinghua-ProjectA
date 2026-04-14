@@ -6,6 +6,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
+using UnityEngine.Video;
 
 /// <summary>
 /// 全屏立面救援小游戏：电梯逐窗停靠；每窗可多人（<see cref="peoplePerWindow"/>），每人 intro→details→Choices 顺序，该窗全部完成后再开下一窗。
@@ -91,8 +92,45 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     [SerializeField] AudioClip successDialogVoiceClip2;
     [Tooltip("点击 success 弹窗内按钮后播放的语音；留空则跳过")]
     [SerializeField] AudioClip successAfterButtonVoiceClip;
+    [Tooltip("点击 success 按钮后播放的视频；会与上面的语音同时开始。留空则只播语音。")]
+    [SerializeField] VideoPlayer successAfterButtonVideoPlayer;
+    [Tooltip("第一段全屏视频对应的 UI 根物体（如 SuccessVideo1Root）；播放第一段视频时自动显示。")]
+    [SerializeField] GameObject successFirstVideoRoot;
+    [Tooltip("开始第一段 success 视频时停止巡航到达 BGM（ScenePhaseBgmController 的 AudioSource）")]
+    [SerializeField] bool stopCruiseArrivalBgmOnSuccessVideo = true;
+    [Tooltip("若 VideoPlayer 为 RenderTexture 且 RawImage.texture 未在 Inspector 赋值，则自动把 targetTexture 赋给对应视频根下的 RawImage")]
+    [SerializeField] bool successVideoAutoBindRawImageTexture = true;
     [Tooltip("成功相关语音的播放源；留空则用 sfxSource")]
     [SerializeField] AudioSource completionVoiceSource;
+    [Tooltip("第一段视频结束后显示的黑屏根物体（一般为全屏黑底）；系统提示期间保持显示。")]
+    [SerializeField] GameObject successBlackScreenRoot;
+    [Tooltip("黑屏阶段系统提示控制器；留空则在场景中查找 SystemDialogController。")]
+    [SerializeField] SystemDialogController successBlackScreenDialog;
+    [TextArea(2, 6)]
+    [SerializeField] string successBlackScreenPromptText;
+    [SerializeField] AudioClip successBlackScreenPromptVoice;
+    [Tooltip("<=0 使用 SystemDialogController 默认打字速度")]
+    [SerializeField] float successBlackScreenPromptCharInterval;
+    [Tooltip("系统提示结束后播放的第二段全屏视频；留空则跳过")]
+    [SerializeField] VideoPlayer successSecondVideoPlayer;
+    [Tooltip("第二段全屏视频对应的 UI 根物体（如 SuccessVideo2Root）；播放第二段视频时自动显示。")]
+    [SerializeField] GameObject successSecondVideoRoot;
+    [Tooltip("第一段视频结束到黑屏提示前的纯黑过渡根物体（可选）。")]
+    [SerializeField] GameObject successTransitionToPromptBlackRoot;
+    [Tooltip("黑屏提示结束到第二段视频前的纯黑过渡根物体（可选）。")]
+    [SerializeField] GameObject successTransitionToSecondVideoBlackRoot;
+    [Tooltip("每段黑场过渡时长（秒）。")]
+    [SerializeField] float successTransitionBlackSeconds = 0.2f;
+    [Tooltip("点击 success 按钮后、第一段视频开始前额外保持纯黑（秒）。")]
+    [SerializeField] float successFirstVideoPreBlackHoldSeconds = 0.35f;
+    [Tooltip("黑屏打字结束后、第二段视频画面出现前额外保持纯黑（秒）；仅影响第二段视频前。")]
+    [SerializeField] float successSecondVideoPreBlackHoldSeconds = 0.45f;
+    [Tooltip("第二段视频结束后显示的全屏图片页根物体")]
+    [SerializeField] GameObject successFinalImagePageRoot;
+    [Tooltip("全屏图片页循环 BGM；留空则不播放")]
+    [SerializeField] AudioClip successFinalImageLoopBgm;
+    [Tooltip("全屏图片页 BGM 播放源；留空则用 completionVoiceSource，再留空则用 sfxSource")]
+    [SerializeField] AudioSource successFinalImageBgmSource;
 
     [Header("成功 success")]
     [Tooltip("电梯移出立面后显示；弹出后依次播 successDialogVoiceClip1/2，点按钮后再播 successAfterButtonVoiceClip")]
@@ -301,6 +339,8 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
     bool _successFlowActive;
     bool _successContinueClicked;
+    bool _facadeRescueCountdownRunning;
+    bool _successEnteredFinalImagePage;
 
     void Awake()
     {
@@ -351,7 +391,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
     void TickFacadeRescueCountdown()
     {
-        if (_fail2TimeExpired)
+        if (_fail2TimeExpired || !_facadeRescueCountdownRunning)
             return;
         float dt = _sessionUsesUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
         _facadeRescueSecondsLeft = Mathf.Max(0f, _facadeRescueSecondsLeft - dt);
@@ -1141,6 +1181,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     {
         if (!_isOpen || _wrong1BlockingWindow < 0 || _fail2TimeExpired)
             return;
+        PlayFacadeUiClick();
         int idx = _wrong1BlockingWindow;
         _wrong1BlockingWindow = -1;
         if (wrong1Panel != null)
@@ -1173,6 +1214,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     {
         if (!_isOpen || _wrong2BlockingWindow < 0 || _fail2TimeExpired)
             return;
+        PlayFacadeUiClick();
         int idx = _wrong2BlockingWindow;
         _wrong2BlockingWindow = -1;
         if (wrong2Panel != null)
@@ -1205,6 +1247,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     {
         if (!_isOpen || !_fail1PendingRestart)
             return;
+        PlayFacadeUiClick();
         _fail1RestartClicked = true;
     }
 
@@ -1227,6 +1270,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
             return;
         if (!_fail2TimeExpired && (fail2Panel == null || !fail2Panel.activeSelf))
             return;
+        PlayFacadeUiClick();
         _fail2RestartClicked = true;
     }
 
@@ -1247,6 +1291,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     {
         if (!_isOpen || !_successFlowActive)
             return;
+        PlayFacadeUiClick();
         _successContinueClicked = true;
     }
 
@@ -1255,7 +1300,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         _successFlowActive = true;
         _successContinueClicked = false;
         if (successPanel != null)
-            successPanel.SetActive(true);
+            successPanel.SetActive(false);
 
         var src = completionVoiceSource != null ? completionVoiceSource : sfxSource;
 
@@ -1266,6 +1311,16 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
                 yield return new WaitForSecondsRealtime(successDialogVoiceClip1.length);
             else
                 yield return new WaitForSeconds(successDialogVoiceClip1.length);
+        }
+
+        if (stopCruiseArrivalBgmOnSuccessVideo)
+            StopCruiseArrivalBgmIfAny();
+
+        if (successPanel != null)
+        {
+            successPanel.SetActive(true);
+            _facadeRescueCountdownRunning = false;
+            RefreshFacadeRescueCountdownLabel();
         }
 
         if (successDialogVoiceClip2 != null && src != null)
@@ -1293,18 +1348,282 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
                 this);
         }
 
-        if (successAfterButtonVoiceClip != null && src != null)
-        {
-            src.PlayOneShot(successAfterButtonVoiceClip);
-            if (_sessionUsesUnscaledTime)
-                yield return new WaitForSecondsRealtime(successAfterButtonVoiceClip.length);
-            else
-                yield return new WaitForSeconds(successAfterButtonVoiceClip.length);
-        }
+        yield return CoPlaySuccessAfterButtonMedia(src);
 
         if (successPanel != null)
             successPanel.SetActive(false);
         _successFlowActive = false;
+    }
+
+    IEnumerator CoPlaySuccessAfterButtonMedia(AudioSource voiceSource)
+    {
+        var vp = successAfterButtonVideoPlayer;
+        bool hasVideo = vp != null;
+        bool hasAudio = successAfterButtonVoiceClip != null && voiceSource != null;
+        if (!hasVideo && !hasAudio)
+            yield break;
+
+        float audioSeconds = hasAudio ? successAfterButtonVoiceClip.length : 0f;
+        float videoSeconds = 0f;
+
+        if (hasVideo)
+        {
+            float pre1 = Mathf.Max(0f, successFirstVideoPreBlackHoldSeconds);
+            if (pre1 > 0f && successTransitionToPromptBlackRoot != null)
+            {
+                successTransitionToPromptBlackRoot.SetActive(true);
+                if (_sessionUsesUnscaledTime)
+                    yield return new WaitForSecondsRealtime(pre1);
+                else
+                    yield return new WaitForSeconds(pre1);
+                successTransitionToPromptBlackRoot.SetActive(false);
+            }
+            if (successFirstVideoRoot != null)
+                successFirstVideoRoot.SetActive(true);
+            if (successSecondVideoRoot != null)
+                successSecondVideoRoot.SetActive(false);
+            if (vp.isPlaying)
+                vp.Stop();
+            EnsureSuccessVideoVisualBindings(vp, successFirstVideoRoot);
+            yield return CoPrepareAndPlayVideo(vp);
+            if (vp.clip != null)
+                videoSeconds = vp.isPlaying ? (float)vp.clip.length : 0f;
+        }
+
+        if (hasAudio)
+            voiceSource.PlayOneShot(successAfterButtonVoiceClip);
+
+        float waitSeconds = Mathf.Max(audioSeconds, videoSeconds);
+        if (waitSeconds > 0f)
+        {
+            if (_sessionUsesUnscaledTime)
+                yield return new WaitForSecondsRealtime(waitSeconds);
+            else
+                yield return new WaitForSeconds(waitSeconds);
+        }
+        else if (hasVideo)
+        {
+            yield return new WaitUntil(() => !vp.isPlaying);
+        }
+
+        if (successFirstVideoRoot != null)
+            successFirstVideoRoot.SetActive(false);
+
+        yield return CoPlaySuccessTransitionBlack(successTransitionToPromptBlackRoot);
+        if (successTransitionToSecondVideoBlackRoot != null)
+            successTransitionToSecondVideoBlackRoot.SetActive(true);
+        yield return CoPlaySuccessBlackScreenPrompt();
+        float pre2 = Mathf.Max(0f, successSecondVideoPreBlackHoldSeconds);
+        if (pre2 > 0f)
+        {
+            if (successTransitionToSecondVideoBlackRoot != null)
+                successTransitionToSecondVideoBlackRoot.SetActive(true);
+            if (_sessionUsesUnscaledTime)
+                yield return new WaitForSecondsRealtime(pre2);
+            else
+                yield return new WaitForSeconds(pre2);
+        }
+
+        yield return CoPlaySecondSuccessVideo();
+        EnterSuccessFinalImagePage();
+    }
+
+    IEnumerator CoPlaySuccessBlackScreenPrompt()
+    {
+        bool hasPrompt = !string.IsNullOrEmpty(successBlackScreenPromptText) || successBlackScreenPromptVoice != null;
+        if (!hasPrompt)
+            yield break;
+
+        if (successBlackScreenRoot != null)
+            successBlackScreenRoot.SetActive(true);
+
+        var dlg = successBlackScreenDialog != null
+            ? successBlackScreenDialog
+            : FindFirstObjectByType<SystemDialogController>();
+        if (dlg == null)
+        {
+            Debug.LogWarning(
+                $"{nameof(FacadeRescueMiniGameController)}: 已配置黑屏系统提示但未找到 {nameof(SystemDialogController)}，将跳过该提示。",
+                this);
+            if (successBlackScreenRoot != null)
+                successBlackScreenRoot.SetActive(false);
+            yield break;
+        }
+
+        float interval = successBlackScreenPromptCharInterval > 0f ? successBlackScreenPromptCharInterval : 0f;
+        dlg.PlaySingleLine(successBlackScreenPromptText ?? string.Empty, successBlackScreenPromptVoice, interval);
+        yield return dlg.WaitUntilDialogIdle();
+
+        if (successBlackScreenRoot != null)
+            successBlackScreenRoot.SetActive(false);
+    }
+
+    IEnumerator CoPlaySecondSuccessVideo()
+    {
+        var vp2 = successSecondVideoPlayer;
+        if (vp2 == null)
+        {
+            if (successTransitionToSecondVideoBlackRoot != null)
+                successTransitionToSecondVideoBlackRoot.SetActive(false);
+            yield break;
+        }
+
+        if (successFirstVideoRoot != null)
+            successFirstVideoRoot.SetActive(false);
+        if (successSecondVideoRoot != null)
+            successSecondVideoRoot.SetActive(true);
+
+        if (vp2.isPlaying)
+            vp2.Stop();
+        EnsureSuccessVideoVisualBindings(vp2, successSecondVideoRoot);
+        yield return CoPrepareAndPlayVideo(vp2);
+        yield return null;
+        if (successTransitionToSecondVideoBlackRoot != null)
+            successTransitionToSecondVideoBlackRoot.SetActive(false);
+
+        float seconds = vp2.clip != null && vp2.isPlaying ? (float)vp2.clip.length : 0f;
+        if (seconds > 0f)
+        {
+            if (_sessionUsesUnscaledTime)
+                yield return new WaitForSecondsRealtime(seconds);
+            else
+                yield return new WaitForSeconds(seconds);
+        }
+        else
+        {
+            yield return new WaitUntil(() => !vp2.isPlaying);
+        }
+
+        if (successSecondVideoRoot != null)
+            successSecondVideoRoot.SetActive(false);
+    }
+
+    IEnumerator CoPlaySuccessTransitionBlack(GameObject transitionRoot)
+    {
+        if (transitionRoot == null)
+            yield break;
+
+        transitionRoot.SetActive(true);
+        float seconds = Mathf.Max(0f, successTransitionBlackSeconds);
+        if (seconds > 0f)
+        {
+            if (_sessionUsesUnscaledTime)
+                yield return new WaitForSecondsRealtime(seconds);
+            else
+                yield return new WaitForSeconds(seconds);
+        }
+        transitionRoot.SetActive(false);
+    }
+
+    void EnterSuccessFinalImagePage()
+    {
+        if (successFinalImagePageRoot == null)
+            return;
+        successFinalImagePageRoot.SetActive(true);
+        StartSuccessFinalImageLoopBgm();
+        _successEnteredFinalImagePage = true;
+    }
+
+    void StartSuccessFinalImageLoopBgm()
+    {
+        if (successFinalImageLoopBgm == null)
+            return;
+        var src = successFinalImageBgmSource != null
+            ? successFinalImageBgmSource
+            : (completionVoiceSource != null ? completionVoiceSource : sfxSource);
+        if (src == null)
+            return;
+
+        src.Stop();
+        src.clip = successFinalImageLoopBgm;
+        src.loop = true;
+        src.Play();
+    }
+
+    void StopSuccessFinalImageLoopBgm()
+    {
+        var src = successFinalImageBgmSource != null
+            ? successFinalImageBgmSource
+            : (completionVoiceSource != null ? completionVoiceSource : sfxSource);
+        if (src == null)
+            return;
+        if (src.clip != successFinalImageLoopBgm)
+            return;
+        src.Stop();
+        src.loop = false;
+        src.clip = null;
+    }
+
+    void StopCruiseArrivalBgmIfAny()
+    {
+        var ctrls = FindObjectsByType<ScenePhaseBgmController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var c in ctrls)
+        {
+            if (c == null)
+                continue;
+            var src = c.GetComponent<AudioSource>();
+            if (src == null)
+                continue;
+            src.Stop();
+            src.clip = null;
+        }
+    }
+
+    void EnsureSuccessVideoVisualBindings(VideoPlayer vp, GameObject videoRoot)
+    {
+        if (vp == null)
+            return;
+        vp.playOnAwake = false;
+        vp.waitForFirstFrame = true;
+
+        if (vp.renderMode != VideoRenderMode.RenderTexture)
+        {
+            Debug.LogWarning(
+                $"{nameof(FacadeRescueMiniGameController)}: {vp.name} 的 Render Mode 为 {vp.renderMode}，与 RawImage+RenderTexture 方案不一致时会出现有声无画。请在 Inspector 将 Video Player 设为 Render Texture 并指定 Target Texture。",
+                this);
+            return;
+        }
+
+        if (vp.targetTexture == null)
+        {
+            Debug.LogError(
+                $"{nameof(FacadeRescueMiniGameController)}: {vp.name} 为 Render Texture 模式但 Target Texture 未赋值，视频无法显示。",
+                this);
+            return;
+        }
+
+        if (!successVideoAutoBindRawImageTexture || videoRoot == null)
+            return;
+
+        foreach (var ri in videoRoot.GetComponentsInChildren<RawImage>(true))
+        {
+            if (ri == null)
+                continue;
+            if (ri.texture == null)
+                ri.texture = vp.targetTexture;
+            ri.color = Color.white;
+            ri.enabled = true;
+        }
+    }
+
+    IEnumerator CoPrepareAndPlayVideo(VideoPlayer vp)
+    {
+        if (vp == null)
+            yield break;
+
+        vp.Prepare();
+        float deadline = (_sessionUsesUnscaledTime ? Time.realtimeSinceStartup : Time.time) + 12f;
+        while (!vp.isPrepared)
+        {
+            if ((_sessionUsesUnscaledTime ? Time.realtimeSinceStartup : Time.time) > deadline)
+            {
+                Debug.LogError($"{nameof(FacadeRescueMiniGameController)}: VideoPlayer「{vp.name}」Prepare 超时，跳过播放。", this);
+                yield break;
+            }
+            yield return null;
+        }
+
+        vp.Play();
     }
 
     /// <summary>由任务在无人机进入触发区且前置音频完成后调用。</summary>
@@ -1356,6 +1675,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         _fail2TimeExpired = false;
         _fail2RestartClicked = false;
         _facadeRescueSecondsLeft = Mathf.Max(1f, facadeRescueTimeLimitSeconds);
+        _facadeRescueCountdownRunning = false;
         RefreshFacadeRescueCountdownLabel();
         _sessionUsesUnscaledTime = editorDebugIsolateWorld;
         _editorDebugWePausedWorld = editorDebugIsolateWorld;
@@ -1422,6 +1742,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         EndElevatorMoveSound();
 
         _isOpen = false;
+        _facadeRescueCountdownRunning = false;
         FacadeRescueSessionState.SetOpen(false);
         _sessionUsesUnscaledTime = false;
         if (_assignedWorldCameraForWorldSpaceCanvas)
@@ -1490,6 +1811,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
             _fail2TimeExpired = false;
             _fail2RestartClicked = false;
             _facadeRescueSecondsLeft = Mathf.Max(1f, facadeRescueTimeLimitSeconds);
+            _facadeRescueCountdownRunning = true;
             RefreshFacadeRescueCountdownLabel();
 
             HideAllWindowUi();
@@ -1599,6 +1921,12 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
                     this);
             }
 
+            if (_successEnteredFinalImagePage)
+            {
+                _sessionCo = null;
+                yield break;
+            }
+
             Close(true);
             yield break;
         }
@@ -1609,6 +1937,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         yield return CoPlayPreSessionSystemPrompts();
         if (!_isOpen)
             yield break;
+        _facadeRescueCountdownRunning = true;
         yield return CoSession();
     }
 
@@ -1707,6 +2036,21 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         PlayFacadeUiClick();
 
         int p = index >= 0 && index < _activePersonInWindow.Length ? _activePersonInWindow[index] : 0;
+        if (_windowFlowPhase[index] >= 2 && _windowFlowPhase[index] < 4)
+        {
+            SetChoicesVisible(w, false);
+            GameObject detailsCurrent = GetWindowDetailsObject(index, p);
+            if (detailsCurrent != null)
+                detailsCurrent.SetActive(true);
+            var revealCurrent = ResolveRevealButtonForPerson(index, p);
+            if (revealCurrent != null)
+                revealCurrent.gameObject.SetActive(true);
+            if (w.windowButton != null)
+                w.windowButton.interactable = false;
+            _windowFlowPhase[index] = 2;
+            return;
+        }
+
         if (_resumeDetailsOnWindowClick[index])
         {
             _resumeDetailsOnWindowClick[index] = false;
@@ -1799,7 +2143,16 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
         PlayFacadeUiClick();
 
+        int p = index >= 0 && index < _activePersonInWindow.Length ? _activePersonInWindow[index] : 0;
+        GameObject details = GetWindowDetailsObject(index, p);
+        if (details != null)
+            details.SetActive(false);
         SetChoicesVisible(w, true);
+        if (w.windowButton != null)
+        {
+            w.windowButton.gameObject.SetActive(true);
+            w.windowButton.interactable = true;
+        }
         _windowFlowPhase[index] = 3;
     }
 
@@ -1956,6 +2309,20 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
             fail2Panel.SetActive(false);
         if (successPanel != null)
             successPanel.SetActive(false);
+        if (successFirstVideoRoot != null)
+            successFirstVideoRoot.SetActive(false);
+        if (successSecondVideoRoot != null)
+            successSecondVideoRoot.SetActive(false);
+        if (successTransitionToPromptBlackRoot != null)
+            successTransitionToPromptBlackRoot.SetActive(false);
+        if (successTransitionToSecondVideoBlackRoot != null)
+            successTransitionToSecondVideoBlackRoot.SetActive(false);
+        if (successBlackScreenRoot != null)
+            successBlackScreenRoot.SetActive(false);
+        if (successFinalImagePageRoot != null)
+            successFinalImagePageRoot.SetActive(false);
+        StopSuccessFinalImageLoopBgm();
+        _successEnteredFinalImagePage = false;
         _successFlowActive = false;
 
         for (int i = 0; i < _activePersonInWindow.Length; i++)

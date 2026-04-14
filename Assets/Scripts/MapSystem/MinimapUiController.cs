@@ -73,7 +73,7 @@ public class MinimapUiController : MonoBehaviour
     private bool _uiBuilt;
     private bool _runtimeConfigInstance;
     private bool _mapVisible;
-    private bool _suppressedByExternalReason;
+    private bool _mapSuppressedForExternalReason;
 
     private void Awake()
     {
@@ -100,7 +100,16 @@ public class MinimapUiController : MonoBehaviour
         _mapVisible = false;
         ApplyVisibility(false);
         BackupInitialBlackScreen blacksScreen = Object.FindFirstObjectByType<BackupInitialBlackScreen>();
-        if (blacksScreen != null) blacksScreen.onFadeOutComplete.AddListener(OnBlackScreenFadeOutComplete);
+        if (blacksScreen != null)
+        {
+            blacksScreen.onFadeOutComplete.AddListener(OnBlackScreenFadeOutComplete);
+        }
+        else
+        {
+            // Fallback: if no black-screen bootstrap exists, show map immediately.
+            _mapVisible = true;
+            ApplyVisibility(true);
+        }
     }
 
     private void OnBlackScreenFadeOutComplete()
@@ -113,8 +122,9 @@ public class MinimapUiController : MonoBehaviour
 
     private void ApplyVisibility(bool visible)
     {
-        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap && !_suppressedByExternalReason);
-        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen && !_suppressedByExternalReason);
+        bool finalVisible = visible && !_mapSuppressedForExternalReason;
+        if (miniRoot != null) miniRoot.gameObject.SetActive(finalVisible && mode == MapViewMode.Minimap);
+        if (fullRoot != null) fullRoot.gameObject.SetActive(finalVisible && mode == MapViewMode.Fullscreen);
     }
 
     private void OnValidate()
@@ -350,7 +360,19 @@ public class MinimapUiController : MonoBehaviour
             else marker.sizeDelta = markerSize;
             Image image = marker.GetComponent<Image>();
             marker.gameObject.SetActive(entry.state != MissionObjectiveState.Hidden);
-            if (image != null) image.color = entry.state == MissionObjectiveState.Completed ? completedMarkerColor : activeMarkerColor;
+            if (image != null)
+            {
+                if (entry.markerSprite != null)
+                {
+                    image.sprite = entry.markerSprite;
+                    image.color = Color.white;
+                    image.preserveAspect = true;
+                }
+                else
+                {
+                    image.color = entry.state == MissionObjectiveState.Completed ? completedMarkerColor : activeMarkerColor;
+                }
+            }
         }
     }
 
@@ -401,22 +423,22 @@ public class MinimapUiController : MonoBehaviour
         }
     }
 
+    private void ApplyMode()
+    {
+        bool visible = _mapVisible && !_mapSuppressedForExternalReason;
+        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap);
+        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen);
+    }
+
     /// <summary>
-    /// 外部原因（如路线规划模式）强制隐藏地图。
-    /// 与 ShowMap/HideMap 的用户可见开关独立，互不影响。
-    /// true = 隐藏（外部原因压制）；false = 恢复（撤销压制，地图恢复原状态）。
+    /// 兼容旧调用：由外部流程临时抑制/恢复地图显示（例如小游戏阶段）。
     /// </summary>
     public void SetMapSuppressedForExternalReason(bool suppressed)
     {
-        _suppressedByExternalReason = suppressed;
-        ApplyVisibility(_mapVisible);
-    }
-
-    private void ApplyMode()
-    {
-        bool visible = _mapVisible && !_suppressedByExternalReason;
-        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap);
-        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen);
+        if (_mapSuppressedForExternalReason == suppressed)
+            return;
+        _mapSuppressedForExternalReason = suppressed;
+        ApplyMode();
     }
 
     /// <summary>

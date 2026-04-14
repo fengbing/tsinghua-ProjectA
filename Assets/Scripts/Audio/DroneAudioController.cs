@@ -97,7 +97,7 @@ public class DroneAudioController : MonoBehaviour
     bool _lowPassInitialized;
 
     float _smoothedLogicalPitch = 1f;
-    float _smoothedOutputVolume = 0.5f;
+    float _smoothedOutputVolume = 0f;
     float _smoothedSpeedVolMul = 1f;
     float _speedVolMulVelocity;
     float _perlinSeed;
@@ -242,12 +242,14 @@ public class DroneAudioController : MonoBehaviour
         audioSource.clip = clip;
         audioSource.loop = loop;
         audioSource.playOnAwake = false;
+        audioSource.volume = 0f;
 
         if (GetDualLayerBlend() && audioSourceLayerB != null)
         {
             audioSourceLayerB.clip = clip;
             audioSourceLayerB.loop = loop;
             audioSourceLayerB.playOnAwake = false;
+            audioSourceLayerB.volume = 0f;
         }
     }
 

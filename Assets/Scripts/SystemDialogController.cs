@@ -19,10 +19,14 @@ public class SystemDialogLine
 /// </summary>
 public class SystemDialogController : MonoBehaviour
 {
+    const string DedicatedCanvasName = "SystemDialogCanvas";
+
     [Header("UI References (optional, auto-created when empty)")]
     [SerializeField] Canvas targetCanvas;
     [SerializeField] Image dialogPanel;
     [SerializeField] TextMeshProUGUI dialogText;
+    [SerializeField] bool forceDedicatedOverlayCanvas = true;
+    [SerializeField] int dedicatedCanvasSortingOrder = 5000;
 
     [Header("Style")]
     [SerializeField] float panelHeight = 180f;
@@ -102,6 +106,31 @@ public class SystemDialogController : MonoBehaviour
     /// <summary>直接设置 _isPlaying 状态，不停止任何协程（用于阶段切换时重置状态）</summary>
     public void SetIsPlaying(bool value) => _isPlaying = value;
 
+    /// <summary>
+    /// 兼容旧调用：播放单行系统提示（文字+可选语音）。
+    /// </summary>
+    public void PlaySingleLine(string text, AudioClip voiceClip = null, float characterInterval = 0.04f)
+    {
+        var line = new SystemDialogLine
+        {
+            text = text ?? string.Empty,
+            voiceClip = voiceClip,
+            characterInterval = characterInterval > 0f ? characterInterval : 0.04f
+        };
+        PlayDialog(new List<SystemDialogLine> { line });
+    }
+
+    /// <summary>
+    /// 兼容旧调用：等待对话与字幕都空闲。
+    /// </summary>
+    public CustomYieldInstruction WaitUntilDialogIdle()
+    {
+        return new WaitUntil(() =>
+            !_isPlaying &&
+            !_isShowingSubtitle &&
+            (voiceSource == null || !voiceSource.isPlaying));
+    }
+
     /// <summary>清除排队的旁白字幕（用于阶段切换时避免排队旁白被意外执行）</summary>
     public void ClearQueuedSubtitle()
     {
@@ -134,6 +163,9 @@ public class SystemDialogController : MonoBehaviour
 
     public void PlayDialog(IList<SystemDialogLine> lines)
     {
+        EnsureUiSetup();
+        EnsureAudioSource();
+
         if (lines == null || lines.Count == 0)
         {
             StopPlaybackAndCleanup();
@@ -145,7 +177,7 @@ public class SystemDialogController : MonoBehaviour
         var nonEmptyLines = new List<SystemDialogLine>();
         foreach (var line in lines)
         {
-            if (line != null && !string.IsNullOrEmpty(line.text))
+            if (line != null && (!string.IsNullOrEmpty(line.text) || line.voiceClip != null))
                 nonEmptyLines.Add(line);
         }
 
@@ -295,54 +327,83 @@ public class SystemDialogController : MonoBehaviour
         _isPlaying = true;
         ResetPanelLayout();
         if (dialogPanel != null)
+        {
+            dialogPanel.transform.SetAsLastSibling();
             dialogPanel.gameObject.SetActive(true);
+        }
         SetPanelAlpha(1f);
 
         for (int i = 0; i < lines.Count; i++)
         {
             SystemDialogLine line = lines[i];
             _skipCurrentLine = false;
-            PlayVoiceForLine(line);
-            yield return TypeLine(line);
+            yield return PlayLineSynchronized(line);
+            yield return WaitForSecondsByMode(Mathf.Max(0f, completeHoldSeconds));
             onLineCompleted?.Invoke(i);
         }
 
         StopVoice();
 
         if (fadeOutAfterComplete)
-        {
-            yield return WaitForSecondsByMode(Mathf.Max(0f, completeHoldSeconds));
             yield return FadeOutPanel(Mathf.Max(0.01f, fadeOutDuration));
-        }
 
         HideDialog();
         _isPlaying = false;
         onDialogCompleted?.Invoke();
     }
 
-    IEnumerator TypeLine(SystemDialogLine line)
+    IEnumerator PlayLineSynchronized(SystemDialogLine line)
     {
         if (dialogText == null)
-            yield break;
+            EnsureUiSetup();
 
         string content = line?.text ?? string.Empty;
-        dialogText.text = string.Empty;
+        if (dialogText != null)
+            dialogText.text = string.Empty;
         if (string.IsNullOrEmpty(content))
+        {
+            PlayVoiceForLine(line);
+            if (voiceSource != null && voiceSource.isPlaying)
+                yield return new WaitWhile(() => voiceSource != null && voiceSource.isPlaying);
             yield break;
+        }
 
-        float interval = line != null && line.characterInterval > 0f ? line.characterInterval : 0.04f;
-        for (int i = 1; i <= content.Length; i++)
+        PlayVoiceForLine(line);
+        bool hasVoice = line != null && line.voiceClip != null && voiceSource != null;
+        float baseInterval = line != null && line.characterInterval > 0f ? line.characterInterval : 0.04f;
+        float typingDuration = hasVoice
+            ? Mathf.Max(0.01f, line.voiceClip.length)
+            : Mathf.Max(0.01f, content.Length * baseInterval);
+
+        float elapsed = 0f;
+        int shownChars = 0;
+        int charCount = content.Length;
+        while (elapsed < typingDuration)
         {
             if (_skipCurrentLine)
             {
-                dialogText.text = content;
+                if (dialogText != null)
+                    dialogText.text = content;
+                StopVoice();
                 yield break;
             }
 
-            dialogText.text = content.Substring(0, i);
-            if (useUnscaledTime) yield return new WaitForSecondsRealtime(interval);
-            else yield return new WaitForSeconds(interval);
+            elapsed += useUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / typingDuration);
+            int wantChars = Mathf.Clamp(Mathf.FloorToInt(t * charCount), 0, charCount);
+            if (wantChars != shownChars)
+            {
+                shownChars = wantChars;
+                if (dialogText != null)
+                    dialogText.text = content.Substring(0, shownChars);
+            }
+            yield return null;
         }
+
+        if (dialogText != null)
+            dialogText.text = content;
+        if (hasVoice && voiceSource != null && voiceSource.isPlaying)
+            StopVoice();
     }
 
     void PlayVoiceForLine(SystemDialogLine line)
@@ -369,7 +430,10 @@ public class SystemDialogController : MonoBehaviour
         _isShowingSubtitle = true;
         ResetPanelLayout();
         if (dialogPanel != null)
+        {
+            dialogPanel.transform.SetAsLastSibling();
             dialogPanel.gameObject.SetActive(true);
+        }
         SetPanelAlpha(1f);
 
         if (dialogText != null)
@@ -419,7 +483,10 @@ public class SystemDialogController : MonoBehaviour
         _isShowingSubtitle = true;
         ResetPanelLayout();
         if (dialogPanel != null)
+        {
+            dialogPanel.transform.SetAsLastSibling();
             dialogPanel.gameObject.SetActive(true);
+        }
         SetPanelAlpha(1f);
 
         if (dialogText != null)
@@ -505,17 +572,55 @@ public class SystemDialogController : MonoBehaviour
 
     void EnsureUiSetup()
     {
+        if (forceDedicatedOverlayCanvas)
+        {
+            EnsureDedicatedOverlayCanvas();
+        }
+
         if (targetCanvas == null)
         {
             Canvas[] allCanvases = FindObjectsOfType<Canvas>();
             Transform deliveryPromptsRoot = FindDeliveryPromptsUIRoot();
+            Canvas fallbackCanvas = null;
             foreach (var c in allCanvases)
             {
                 // 跳过 DeliveryPromptsUI 及其子级下的 Canvas
                 if (deliveryPromptsRoot != null && c.transform.IsChildOf(deliveryPromptsRoot))
                     continue;
-                targetCanvas = c;
-                break;
+                if (c == null || !c.gameObject.activeInHierarchy)
+                    continue;
+
+                // 优先选择屏幕空间 Overlay，避免挂到 WorldSpace Canvas 导致“有声音无字幕”。
+                if (c.renderMode == RenderMode.ScreenSpaceOverlay)
+                {
+                    targetCanvas = c;
+                    break;
+                }
+
+                // 次优先：屏幕空间 Camera 且有有效 camera。
+                if (targetCanvas == null && c.renderMode == RenderMode.ScreenSpaceCamera && c.worldCamera != null)
+                    targetCanvas = c;
+
+                // 最后兜底：记录任意激活 canvas。
+                fallbackCanvas ??= c;
+            }
+            if (targetCanvas == null)
+                targetCanvas = fallbackCanvas;
+        }
+
+        // 若找到的是 WorldSpace Canvas，改用专用 Overlay Canvas，确保字幕一定可见。
+        if (targetCanvas == null || targetCanvas.renderMode == RenderMode.WorldSpace || !targetCanvas.gameObject.activeInHierarchy)
+        {
+            GameObject canvasGo = new GameObject("SystemDialogCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            targetCanvas = canvasGo.GetComponent<Canvas>();
+            targetCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler scaler = canvasGo.GetComponent<CanvasScaler>();
+            if (scaler != null)
+            {
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                scaler.referenceResolution = new Vector2(1920f, 1080f);
+                scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+                scaler.matchWidthOrHeight = 0.5f;
             }
         }
         if (targetCanvas == null)
@@ -570,6 +675,49 @@ public class SystemDialogController : MonoBehaviour
         dialogText.fontSize = fontSize;
         dialogText.enableWordWrapping = true;
         dialogText.overflowMode = TextOverflowModes.Ellipsis;
+    }
+
+    void EnsureDedicatedOverlayCanvas()
+    {
+        if (targetCanvas != null
+            && targetCanvas.renderMode == RenderMode.ScreenSpaceOverlay
+            && targetCanvas.gameObject.name == DedicatedCanvasName)
+        {
+            targetCanvas.overrideSorting = true;
+            targetCanvas.sortingOrder = Mathf.Max(targetCanvas.sortingOrder, dedicatedCanvasSortingOrder);
+            return;
+        }
+
+        Canvas existing = null;
+        Canvas[] canvases = FindObjectsOfType<Canvas>(true);
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            var c = canvases[i];
+            if (c != null && c.gameObject.name == DedicatedCanvasName)
+            {
+                existing = c;
+                break;
+            }
+        }
+
+        if (existing == null)
+        {
+            GameObject canvasGo = new GameObject(DedicatedCanvasName, typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            existing = canvasGo.GetComponent<Canvas>();
+            existing.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler scaler = canvasGo.GetComponent<CanvasScaler>();
+            if (scaler != null)
+            {
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                scaler.referenceResolution = new Vector2(1920f, 1080f);
+                scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+                scaler.matchWidthOrHeight = 0.5f;
+            }
+        }
+
+        existing.overrideSorting = true;
+        existing.sortingOrder = Mathf.Max(existing.sortingOrder, dedicatedCanvasSortingOrder);
+        targetCanvas = existing;
     }
 
     /// <summary>

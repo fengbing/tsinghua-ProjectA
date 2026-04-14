@@ -576,7 +576,7 @@ public class WindowFireMission : MonoBehaviour
         }
 
         _sprinklerRoutine = StartCoroutine(CoWaterActiveExtinguishLoop());
-        OnFireExtinguishStarted?.Invoke();
+        InvokeEventSafely(OnFireExtinguishStarted, nameof(OnFireExtinguishStarted));
     }
 
     IEnumerator CoWaterActiveExtinguishLoop()
@@ -669,7 +669,7 @@ public class WindowFireMission : MonoBehaviour
                 yield return new WaitWhile(() => voiceSource.isPlaying && voiceSource.clip == narrationAfterFireOut);
         }
 
-        OnFireExtinguishAndNarrationFinished?.Invoke();
+        InvokeEventSafely(OnFireExtinguishAndNarrationFinished, nameof(OnFireExtinguishAndNarrationFinished));
 
         if (ResolveFacadeRescueEntry() != null)
         {
@@ -817,5 +817,25 @@ public class WindowFireMission : MonoBehaviour
         voiceSource.clip = clip;
         voiceSource.Play();
         _lastVoiceClip = clip;
+    }
+
+    void InvokeEventSafely(Action evt, string eventName)
+    {
+        if (evt == null)
+            return;
+        Delegate[] handlers = evt.GetInvocationList();
+        for (int i = 0; i < handlers.Length; i++)
+        {
+            try
+            {
+                ((Action)handlers[i])?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError(
+                    $"{nameof(WindowFireMission)}: subscriber error in {eventName} ({handlers[i].Method.DeclaringType?.Name}.{handlers[i].Method.Name}): {ex}",
+                    this);
+            }
+        }
     }
 }
