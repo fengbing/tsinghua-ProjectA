@@ -591,8 +591,8 @@ MonoBehaviour:
   gameSceneName: 
   systemDialog: {fileID: 0}
   blackScreen: {fileID: 400405035}
-  bgmAudioSource: {fileID: 0}
-  startVideoPlayer: {fileID: 0}
+  bgmAudioSource: {fileID: 1071928421}
+  startVideoPlayer: {fileID: 986872949}
   targetSceneName: menu
   syncStopAudioSource: {fileID: 1055132241}
   narrationText1: "\u6B22\u8FCE\u6765\u52302036\u5E74\uFF0C\u8FD9\u91CC\u662FA\u5E02"
@@ -740,7 +740,7 @@ AudioSource:
   OutputAudioMixerGroup: {fileID: 0}
   m_audioClip: {fileID: 8300000, guid: 932dde1fed0dbba448313175e54addb6, type: 3}
   m_PlayOnAwake: 1
-  m_Volume: 0.548
+  m_Volume: 0.514
   m_Pitch: 1
   Loop: 1
   Mute: 0
@@ -887,7 +887,7 @@ AudioSource:
   OutputAudioMixerGroup: {fileID: 0}
   m_audioClip: {fileID: 0}
   m_PlayOnAwake: 1
-  m_Volume: 1
+  m_Volume: 0.496
   m_Pitch: 1
   Loop: 0
   Mute: 0
