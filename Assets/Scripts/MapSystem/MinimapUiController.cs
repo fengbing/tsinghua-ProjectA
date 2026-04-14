@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.UI;
 
 public class MinimapUiController : MonoBehaviour
@@ -71,6 +72,7 @@ public class MinimapUiController : MonoBehaviour
 
     private bool _uiBuilt;
     private bool _runtimeConfigInstance;
+    private bool _mapVisible;
 
     private void Awake()
     {
@@ -94,6 +96,24 @@ public class MinimapUiController : MonoBehaviour
         if (objectiveProvider != null) objectiveProvider.ObjectivesChanged += RefreshMarkers;
         RefreshMarkers();
         ApplyMode();
+        _mapVisible = false;
+        ApplyVisibility(false);
+        BackupInitialBlackScreen blacksScreen = Object.FindFirstObjectByType<BackupInitialBlackScreen>();
+        if (blacksScreen != null) blacksScreen.onFadeOutComplete.AddListener(OnBlackScreenFadeOutComplete);
+    }
+
+    private void OnBlackScreenFadeOutComplete()
+    {
+        _mapVisible = true;
+        ApplyVisibility(true);
+        BackupInitialBlackScreen blacksScreen = Object.FindFirstObjectByType<BackupInitialBlackScreen>();
+        if (blacksScreen != null) blacksScreen.onFadeOutComplete.RemoveListener(OnBlackScreenFadeOutComplete);
+    }
+
+    private void ApplyVisibility(bool visible)
+    {
+        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap);
+        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen);
     }
 
     private void OnValidate()
@@ -105,6 +125,8 @@ public class MinimapUiController : MonoBehaviour
     private void OnDestroy()
     {
         if (objectiveProvider != null) objectiveProvider.ObjectivesChanged -= RefreshMarkers;
+        BackupInitialBlackScreen blacksScreen = Object.FindFirstObjectByType<BackupInitialBlackScreen>();
+        if (blacksScreen != null) blacksScreen.onFadeOutComplete.RemoveListener(OnBlackScreenFadeOutComplete);
         if (_runtimeConfigInstance && config != null)
         {
             Destroy(config);
@@ -360,7 +382,30 @@ public class MinimapUiController : MonoBehaviour
         ApplyMode();
     }
 
-    private void ApplyMode() { if (miniRoot != null) miniRoot.gameObject.SetActive(mode == MapViewMode.Minimap); if (fullRoot != null) fullRoot.gameObject.SetActive(mode == MapViewMode.Fullscreen); }
+    public void ShowMap()
+    {
+        if (!_mapVisible)
+        {
+            _mapVisible = true;
+            ApplyVisibility(true);
+        }
+    }
+
+    public void HideMap()
+    {
+        if (_mapVisible)
+        {
+            _mapVisible = false;
+            ApplyVisibility(false);
+        }
+    }
+
+    private void ApplyMode()
+    {
+        bool visible = _mapVisible;
+        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap);
+        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen);
+    }
 
     /// <summary>
     /// Map layer and markers share the same zoom: &gt;1 enlarges content around center (zoom in); &lt;1 shrinks (zoom out).

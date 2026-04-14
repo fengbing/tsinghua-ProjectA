@@ -45,7 +45,7 @@ public class DeliveryPhaseManager : MonoBehaviour
     [SerializeField] GameObject balconyCollider;
 
     [Header("音效 - 阳台打开")]
-    [Tooltip("按 G 键打开阳台时播放的音效（如机械展开音效）")]
+    [Tooltip("按 E 键打开阳台时播放的音效（如机械展开音效）")]
     [SerializeField] AudioClip balconyOpenClip;
     [Tooltip("阳台打开音效的音量（0~1）")]
     [Range(0f, 1f)][SerializeField] float balconyOpenVolume = 1f;
@@ -59,6 +59,10 @@ public class DeliveryPhaseManager : MonoBehaviour
     [Tooltip("Animator Controller 中的 bool 参数名（区分大小写，如 \"IsOpen\"），用于 SetBool 方式")]
     [SerializeField] string balconyOpenParamName = "IsOpen";
     [SerializeField] float balconyColliderEnableDelay = 0.8f;
+
+    [Header("Backup 场景专用")]
+    [Tooltip("旁白4播放后由 BackupNarrativeController 设置为 true，替代 Animator 动画为 Z 轴插值")]
+    [SerializeField] public bool useBackupScenePositionLerp;
 
     DeliveryState _currentState = DeliveryState.Idle;
     bool _flowStarted;
@@ -197,11 +201,11 @@ public class DeliveryPhaseManager : MonoBehaviour
                 break;
 
             case DeliveryState.DroneAtRooftop:
-                ShowPrompt("飞入光圈，长按 G 键验证身份");
+                ShowPrompt("飞入光圈，长按 E 键验证身份");
                 break;
 
             case DeliveryState.Verifying:
-                promptsUI?.ShowWithProgress("验证中，请保持按住 G 键...", 0f);
+                promptsUI?.ShowWithProgress("验证中，请保持按住 E 键...", 0f);
                 break;
 
             // === 阶段3：验证完成，等待飞回楼栋外 ===
@@ -213,7 +217,7 @@ public class DeliveryPhaseManager : MonoBehaviour
 
             // === 阶段4：楼栋外 → 第一人称扫描 ===
             case DeliveryState.DroneAtBuilding:
-                ShowPrompt("请开启第一人称视角扫描并找到目标阳台");
+                ShowPrompt("请开启第一人称视角扫描");
                 break;
 
             case DeliveryState.DroneInFirstPerson:
@@ -228,7 +232,7 @@ public class DeliveryPhaseManager : MonoBehaviour
 
             // === 阶段5：阳台打开投递 ===
             case DeliveryState.DroneApproachBalcony:
-                ShowPrompt("请按 G 键打开阳台");
+                ShowPrompt("请按 E 键打开阳台");
                 // 到达阳台旁后关闭描边（无人机已在目标位置，不再需要视线引导）
                 if (targetBalconyOutline != null)
                     targetBalconyOutline.SetOutlineEnabled(false);
@@ -239,7 +243,10 @@ public class DeliveryPhaseManager : MonoBehaviour
                     targetBalconyOutline.SetOutlineEnabled(false);
                 ShowPrompt("请将物品投递到阳台中");
                 PlayBalconyOpenSound();
-                PlayBalconyOpenAnimation();
+                if (useBackupScenePositionLerp)
+                    StartCoroutine(LerpBalconyZ(-0.742f, -0.075f, 3f));
+                else
+                    PlayBalconyOpenAnimation();
                 StartCoroutine(EnableBalconyColliderDelayed(balconyColliderEnableDelay));
                 OnBalconyOpened?.Invoke();
                 break;
@@ -485,6 +492,30 @@ public class DeliveryPhaseManager : MonoBehaviour
             balconyAnimator.speed = 1f;
             Debug.Log($"[DeliveryPhaseManager] 阳台动画播放一次（State: {balconyOpenStateName}）");
         }
+    }
+
+    /// <summary>
+    /// Backup 场景专用：将 targetBalcony 的 Z 轴在 duration 秒内从 startZ 匀速插值到 endZ。
+    /// 使用 Time.unscaledDeltaTime，不受 Time.timeScale 影响。
+    /// </summary>
+    System.Collections.IEnumerator LerpBalconyZ(float startZ, float endZ, float duration = 3f)
+    {
+        if (targetBalcony == null)
+            yield break;
+
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+            Vector3 pos = targetBalcony.transform.localPosition;
+            pos.z = Mathf.Lerp(startZ, endZ, t);
+            targetBalcony.transform.localPosition = pos;
+            yield return null;
+        }
+        Vector3 finalPos = targetBalcony.transform.localPosition;
+        finalPos.z = endZ;
+        targetBalcony.transform.localPosition = finalPos;
     }
 
     System.Collections.IEnumerator EnableBalconyColliderDelayed(float delay)

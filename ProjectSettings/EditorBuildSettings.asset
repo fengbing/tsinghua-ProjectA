@@ -6,14 +6,26 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/0.unity
+    path: Assets/Scenes/start.unity
     guid: 7a9a6244fcad4c0499c7f931ae9e3083
+  - enabled: 1
+    path: Assets/Scenes/menu.unity
+    guid: f805c9249f2fc1e458ec5a4227383dc7
+  - enabled: 1
+    path: Assets/Scenes/study.unity
+    guid: ec575c79f2458b447aee8d7b8b3db82e
+  - enabled: 1
+    path: Assets/Scenes/menu 1.unity
+    guid: 6979d5ba22f1c4f4ea87e0127c8e129f
   - enabled: 1
     path: Assets/Scenes/storage.unity
     guid: 941c2a1b2b517284cb5b192664dab9b8
   - enabled: 1
-    path: Assets/Scenes/PlaneGame.unity
-    guid: a4db263bfeb016a4688c017bbaebe966
+    path: Assets/Scenes/backup.unity
+    guid: be567d1917947e5458bfd87764b3b081
+  - enabled: 1
+    path: Assets/Scenes/menu 2.unity
+    guid: ec06637d7f96bd647a8020024707380d
   - enabled: 1
     path: Assets/Scenes/Level 2.unity
     guid: 7368b5c6e1d2f0047b9c9f53772b61f2

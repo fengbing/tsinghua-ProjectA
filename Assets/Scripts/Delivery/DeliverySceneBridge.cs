@@ -19,6 +19,8 @@ public class DeliverySceneBridge : MonoBehaviour
 
     [SerializeField] BridgeType bridgeType;
 
+    public BridgeType GetBridgeType() => bridgeType;
+
     [Header("楼栋待机配置（仅 BuildingExteriorZone 生效）")]
     [Tooltip("无人机在楼栋区域待多久后弹出提示（秒）")]
     [SerializeField] float buildingStayDuration = 2f;

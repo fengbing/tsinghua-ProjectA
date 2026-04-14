@@ -27,7 +27,7 @@ public class RooftopVerifier : MonoBehaviour
     [SerializeField] Image progressFillImage;
 
     [Header("音效 - 验证中")]
-    [Tooltip("长按 G 键验证过程中循环播放的音效（如扫描/读条音效）")]
+    [Tooltip("长按 E 键验证过程中循环播放的音效（如扫描/读条音效）")]
     [SerializeField] AudioClip verifyingClip;
     [Tooltip("验证中音效的音量（0~1）")]
     [Range(0f, 1f)][SerializeField] float verifyingVolume = 1f;
@@ -81,7 +81,7 @@ public class RooftopVerifier : MonoBehaviour
 
         if (_droneInsideRing)
         {
-            if (Input.GetKey(KeyCode.G))
+            if (Input.GetKey(KeyCode.E))
             {
                 _verifyProgress += Time.deltaTime;
                 UpdateProgressUI(_verifyProgress / verificationDuration);
@@ -113,8 +113,6 @@ public class RooftopVerifier : MonoBehaviour
         float dist = Vector3.Distance(drone.position, verificationRing.transform.position);
         bool nowInside = dist <= ringRadius;
 
-        Debug.Log($"[RooftopVerifier] 距离光圈中心 dist={dist:F2}m（需要<={ringRadius}m），_droneInsideRing={_droneInsideRing}");
-
         if (nowInside && !_droneInsideRing)
         {
             _droneInsideRing = true;
@@ -130,7 +128,7 @@ public class RooftopVerifier : MonoBehaviour
         // 无人机能进入光圈但不在里面时，打印当前状态
         if (!nowInside && !_droneInsideRing)
         {
-            Debug.Log($"[RooftopVerifier] 在光圈附近，距离={dist:F2}m（需要<={ringRadius}m）");
+            // 近距离但未进入时不打印日志，避免刷屏
         }
     }
 

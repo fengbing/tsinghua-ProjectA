@@ -27,6 +27,8 @@ public class TutorialHud : MonoBehaviour
     [SerializeField] float feedbackDisplayDuration = 1.2f;
 
     float _feedbackTimer;
+    bool _narrationActive;
+    TutorialPhaseConfig _currentConfig;
 
     void Update()
     {
@@ -43,6 +45,9 @@ public class TutorialHud : MonoBehaviour
     {
         if (config == null) return;
 
+        // 缓存当前配置，旁白结束后用于恢复
+        _currentConfig = config;
+
         if (phaseNameText != null)
         {
             phaseNameText.text = config.phaseName;
@@ -50,12 +55,21 @@ public class TutorialHud : MonoBehaviour
         }
         if (phaseNameBg != null) phaseNameBg.gameObject.SetActive(true);
 
-        if (hintText != null)
+        // 旁白播放期间不显示 hint，等待旁白结束后再显示
+        if (_narrationActive)
         {
-            hintText.text = config.hintText;
-            hintText.gameObject.SetActive(true);
+            if (hintText != null) hintText.gameObject.SetActive(false);
+            if (hintBg != null) hintBg.gameObject.SetActive(false);
         }
-        if (hintBg != null) hintBg.gameObject.SetActive(true);
+        else
+        {
+            if (hintText != null)
+            {
+                hintText.text = config.hintText;
+                hintText.gameObject.SetActive(true);
+            }
+            if (hintBg != null) hintBg.gameObject.SetActive(true);
+        }
 
         if (progressBg != null)
         {
@@ -80,6 +94,27 @@ public class TutorialHud : MonoBehaviour
         if (feedbackText != null) feedbackText.gameObject.SetActive(false);
     }
 
+    /// <summary>旁白开始播放时调用：隐藏 hintText，避免遮挡旁白字幕</summary>
+    public void SetNarrationActive(bool active)
+    {
+        _narrationActive = active;
+        if (!active && _currentConfig != null)
+        {
+            // 旁白结束，恢复 hintText 显示
+            if (hintText != null)
+            {
+                hintText.text = _currentConfig.hintText;
+                hintText.gameObject.SetActive(true);
+            }
+            if (hintBg != null) hintBg.gameObject.SetActive(true);
+        }
+        else if (active)
+        {
+            if (hintText != null) hintText.gameObject.SetActive(false);
+            if (hintBg != null) hintBg.gameObject.SetActive(false);
+        }
+    }
+
     /// <summary>更新进度（当前 / 总数）</summary>
     public void UpdateProgress(int current, int total)
     {
@@ -92,7 +127,7 @@ public class TutorialHud : MonoBehaviour
     {
         if (phaseNameText != null)
         {
-            phaseNameText.text = nextPhaseName + " 即将开始";
+            phaseNameText.text = nextPhaseName;
             phaseNameText.gameObject.SetActive(true);
         }
 
@@ -122,7 +157,7 @@ public class TutorialHud : MonoBehaviour
     {
         if (feedbackText != null)
         {
-            feedbackText.text = "请按住方向键蓄满加速（约2秒）!";
+            feedbackText.text = "请蓄满加速!";
             feedbackText.gameObject.SetActive(true);
         }
         _feedbackTimer = feedbackDisplayDuration;

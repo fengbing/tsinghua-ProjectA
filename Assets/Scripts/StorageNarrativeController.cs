@@ -26,17 +26,44 @@ public class StorageNarrativeController : MonoBehaviour
     [Tooltip("面板隐藏后：进入相机视角时第一段（此段期间仅能转动视角，不能移动）")]
     [SerializeField] AudioClip clipGameplayA;
     [SerializeField] AudioClip clipGameplayB;
-    [Header("取件码正确")]
-    [SerializeField] AudioClip clipPickupSuccess;
-    [SerializeField] MinimapUiController minimapController;
-
     [Header("无人机")]
     [SerializeField] PlaneController planeController;
     [Tooltip("剧情全过程禁用移动直至 clipGameplayB 播完")]
     [SerializeField] bool disablePlaneUntilNarrativeDone = true;
 
+    [Header("SystemDialogController")]
+    [SerializeField] SystemDialogController systemDialog;
+
+    [Header("前置旁白（场景开始2秒后顺序播放）")]
+    [TextArea(2, 5)]
+    [SerializeField] string narrationText1 = "";
+    [SerializeField] AudioClip narrationAudio1;
+    [Range(0f, 1f)]
+    [SerializeField] float narrationVolume1 = 1f;
+
+    [TextArea(2, 5)]
+    [SerializeField] string narrationText2 = "";
+    [SerializeField] AudioClip narrationAudio2;
+    [Range(0f, 1f)]
+    [SerializeField] float narrationVolume2 = 1f;
+
+    [TextArea(2, 5)]
+    [SerializeField] string narrationText3 = "";
+    [SerializeField] AudioClip narrationAudio3;
+    [Range(0f, 1f)]
+    [SerializeField] float narrationVolume3 = 1f;
+
+    [Header("密码成功后旁白")]
+    [TextArea(2, 5)]
+    [SerializeField] string pickupNarrationText = "";
+    [SerializeField] AudioClip pickupNarrationAudio;
+    [Range(0f, 1f)]
+    [SerializeField] float pickupNarrationVolume = 1f;
+
     bool _flowFinished;
+    bool _pickupNarrationPlayed;
     DecryptPuzzleUI _puzzleUi;
+    MinimapUiController _minimapController;
 
     void Awake()
     {
@@ -49,10 +76,14 @@ public class StorageNarrativeController : MonoBehaviour
 
         if (planeController == null)
             planeController = FindObjectOfType<PlaneController>();
+        _minimapController = FindObjectOfType<MinimapUiController>();
     }
 
     void Start()
     {
+        if (systemDialog == null)
+            systemDialog = FindObjectOfType<SystemDialogController>();
+
         _puzzleUi = DecryptPuzzleUI.Instance != null ? DecryptPuzzleUI.Instance : FindObjectOfType<DecryptPuzzleUI>();
         if (_puzzleUi != null)
             _puzzleUi.OnDecryptPuzzleSolved += OnPickupSuccess;
@@ -60,7 +91,18 @@ public class StorageNarrativeController : MonoBehaviour
         if (disablePlaneUntilNarrativeDone && planeController != null)
             planeController.SetInputEnabled(false);
 
-        StartCoroutine(RunNarrativeFlow());
+        StartCoroutine(StartNarrativeSequence());
+    }
+
+    IEnumerator StartNarrativeSequence()
+    {
+        yield return new WaitForSecondsRealtime(2f);
+
+        yield return PlayNarration(narrationText1, narrationAudio1, narrationVolume1);
+        yield return PlayNarration(narrationText2, narrationAudio2, narrationVolume2);
+        yield return PlayNarration(narrationText3, narrationAudio3, narrationVolume3);
+
+        yield return StartCoroutine(RunNarrativeFlow());
     }
 
     void OnDestroy()
@@ -118,12 +160,61 @@ public class StorageNarrativeController : MonoBehaviour
     void OnPickupSuccess()
     {
         if (!_flowFinished) return;
+        if (_pickupNarrationPlayed) return;
+        _pickupNarrationPlayed = true;
 
-        if (clipPickupSuccess != null && narrativeAudio != null)
-            narrativeAudio.PlayOneShot(clipPickupSuccess);
+        StartCoroutine(PlayPickupNarration());
+    }
 
-        var map = minimapController != null ? minimapController : FindObjectOfType<MinimapUiController>();
+    IEnumerator PlayPickupNarration()
+    {
+        yield return PlayNarration(pickupNarrationText, pickupNarrationAudio, pickupNarrationVolume);
+
+        var map = _minimapController != null ? _minimapController : FindObjectOfType<MinimapUiController>();
         if (map != null)
             map.PerformToggle();
+    }
+
+    IEnumerator PlayNarration(string text, AudioClip clip, float volume)
+    {
+        if (systemDialog == null)
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+            yield break;
+        }
+
+        var voiceSrc = systemDialog.VoiceSource;
+        float savedVolume = 1f;
+        if (voiceSrc != null)
+        {
+            savedVolume = voiceSrc.volume;
+            voiceSrc.volume = volume;
+        }
+
+        if (clip != null && !string.IsNullOrEmpty(text))
+        {
+            systemDialog.ShowSubtitle(text, clip.length, clip);
+            yield return new WaitForSecondsRealtime(clip.length);
+        }
+        else if (clip != null)
+        {
+            if (voiceSrc != null)
+                voiceSrc.PlayOneShot(clip);
+            yield return new WaitForSecondsRealtime(clip.length);
+        }
+        else if (!string.IsNullOrEmpty(text))
+        {
+            float estimatedDuration = text.Length * 0.04f + 0.5f;
+            systemDialog.ShowSubtitle(text, estimatedDuration, null);
+            yield return new WaitForSecondsRealtime(estimatedDuration);
+        }
+        else
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+        }
+
+        if (voiceSrc != null)
+            voiceSrc.volume = savedVolume;
+        systemDialog.HideSubtitle(forceFadeOut: false);
     }
 }

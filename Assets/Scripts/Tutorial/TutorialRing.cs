@@ -29,7 +29,9 @@ public class TutorialRing : MonoBehaviour
     [Header("音效")]
     public AudioSource audioSource;
     public AudioClip passSound;
+    [Range(0f, 1f)] public float passSoundVolume = 1f;
     public AudioClip boostRequiredSound;
+    [Range(0f, 1f)] public float boostRequiredSoundVolume = 1f;
 
     [Header("通过后禁用时间（秒）")]
     public float disableDuration = 0.8f;
@@ -60,7 +62,7 @@ public class TutorialRing : MonoBehaviour
     {
         if (_disableTimer > 0f)
         {
-            _disableTimer -= Time.deltaTime;
+            _disableTimer -= Time.unscaledDeltaTime;
             if (_disableTimer <= 0f && _passed)
                 gameObject.SetActive(false);
         }
@@ -68,7 +70,7 @@ public class TutorialRing : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
-        Debug.Log($"[Ring {ringIndex}] OnTriggerEnter with {other.name}");
+        Debug.Log($"[Ring {ringIndex}] OnTriggerEnter with {other.name} (phase={phase}, _passed={_passed}, _invoked={_invoked})");
         if (_passed) return;
         if (_invoked) return;
 
@@ -87,7 +89,7 @@ public class TutorialRing : MonoBehaviour
             hud?.ShowBoostRequired();
 
             if (audioSource != null && boostRequiredSound != null)
-                audioSource.PlayOneShot(boostRequiredSound);
+                audioSource.PlayOneShot(boostRequiredSound, boostRequiredSoundVolume);
 
             return;
         }
@@ -97,7 +99,7 @@ public class TutorialRing : MonoBehaviour
         SetVisualColor(passedColor);
 
         if (audioSource != null && passSound != null)
-            audioSource.PlayOneShot(passSound);
+            audioSource.PlayOneShot(passSound, passSoundVolume);
 
         TutorialHud hud2 = FindObjectOfType<TutorialHud>();
         hud2?.ShowRingPassed();

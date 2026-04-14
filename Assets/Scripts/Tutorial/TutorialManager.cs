@@ -177,10 +177,10 @@ public class TutorialManager : MonoBehaviour
         switch (_currentPhase)
         {
             case TutorialPhase.Phase1_WASD:
-                inputRestriction?.SetRestriction(false, false, false);
+                inputRestriction?.SetRestriction(false, true, false);
                 break;
             case TutorialPhase.Phase2_Vertical:
-                inputRestriction?.SetRestriction(true, false, false);
+                inputRestriction?.SetRestriction(true, true, false);
                 break;
             case TutorialPhase.Phase3_Full:
                 inputRestriction?.SetRestriction(true, true, true);
@@ -267,19 +267,33 @@ public class TutorialManager : MonoBehaviour
         _passedRingSet = new HashSet<int>();
         _state = TutorialState.Running;
 
+        // 直接重置 _isPlaying，不触发 PlayDialog，避免排队旁白被意外执行
+        if (systemDialog != null)
+        {
+            systemDialog.ClearQueuedSubtitle();
+            systemDialog.SetIsPlaying(false);
+        }
+
         ApplyInputRestriction();
         ActivateRingsForPhase();
         Debug.Log($"[Tutorial] CompleteTransition，hud={(hud != null ? "非空" : "null")}，config ringIndices={CurrentConfig?.ringIndices?.Count}");
+
         hud?.ShowPhase(CurrentConfig);
-        PlayDialogForPhase(_currentPhase, true);
     }
 
     void CompleteTutorial()
     {
         _state = TutorialState.Completed;
         inputRestriction?.SetRestriction(true, true, true);
+
+        // 直接重置 _isPlaying，不触发 PlayDialog，避免排队旁白被意外执行
+        if (systemDialog != null)
+        {
+            systemDialog.ClearQueuedSubtitle();
+            systemDialog.SetIsPlaying(false);
+        }
+
         hud?.ShowCompleted();
-        PlayCompleteDialog();
     }
 
     void PlayDialogForPhase(TutorialPhase phase, bool fromTransition)
@@ -287,28 +301,10 @@ public class TutorialManager : MonoBehaviour
         if (systemDialog == null)
             return;
 
-        string lineText = phase switch
-        {
-            TutorialPhase.Phase1_WASD => "系统提示：第一阶段开始，使用 WASD 移动无人机。",
-            TutorialPhase.Phase2_Vertical => "系统提示：第二阶段开始，使用空格上升与 Ctrl 下降。",
-            TutorialPhase.Phase3_Full => "系统提示：第三阶段开始，按顺序通过全部光圈。",
-            _ => "系统提示：阶段开始。"
-        };
-
-        if (fromTransition)
-            lineText = "系统提示：准备进入下一阶段。 " + lineText;
-
-        var voice = phase switch
-        {
-            TutorialPhase.Phase1_WASD => introVoiceClip,
-            TutorialPhase.Phase2_Vertical => phase2VoiceClip,
-            TutorialPhase.Phase3_Full => phase3VoiceClip,
-            _ => null
-        };
-
+        // 阶段提示文字由 StudyNarrativeController 统一管理，此处不显示系统提示
         systemDialog.PlayDialog(new List<SystemDialogLine>
         {
-            new() { text = lineText, voiceClip = voice, characterInterval = 0.035f }
+            new() { text = "", voiceClip = null, characterInterval = 0.04f }
         });
     }
 
@@ -317,9 +313,10 @@ public class TutorialManager : MonoBehaviour
         if (systemDialog == null)
             return;
 
+        // 教学完成不显示系统提示，由 StudyNarrativeController 的旁白4统一管理
         systemDialog.PlayDialog(new List<SystemDialogLine>
         {
-            new() { text = "系统提示：教学完成，祝你执行任务顺利。", voiceClip = completedVoiceClip, characterInterval = 0.035f }
+            new() { text = "", voiceClip = null, characterInterval = 0.04f }
         });
     }
 

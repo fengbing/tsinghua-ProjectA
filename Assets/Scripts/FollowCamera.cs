@@ -35,6 +35,7 @@ public class FollowCamera : MonoBehaviour
     float _pitch;
     bool _firstPersonMode;
     bool _mouseLookEnabled = true;
+    bool _isPaused;
     bool _autocruiseLookAssist;
     Vector3 _autocruiseLookWorldPoint;
 
@@ -75,7 +76,7 @@ public class FollowCamera : MonoBehaviour
 
     void LateUpdate()
     {
-        if (target == null) return;
+        if (target == null || _isPaused) return;
 
         if (Input.GetKeyDown(KeyCode.LeftAlt) || Input.GetKeyDown(KeyCode.RightAlt))
             _firstPersonMode = !_firstPersonMode;
@@ -128,5 +129,17 @@ public class FollowCamera : MonoBehaviour
     {
         _autocruiseLookAssist = active;
         _autocruiseLookWorldPoint = worldPoint;
+    }
+
+    /// <summary>暂停相机跟随（由 PlaneGameNarrativeDirector.PauseGame 调用）。</summary>
+    public void Pause()
+    {
+        _isPaused = true;
+    }
+
+    /// <summary>恢复相机跟随（由 PlaneGameNarrativeDirector.ResumeGame 调用）。</summary>
+    public void Resume()
+    {
+        _isPaused = false;
     }
 }

@@ -31,10 +31,49 @@ public class PlaneGameDeliveryZone : MonoBehaviour
         _audioSource.playOnAwake = false;
     }
 
+    void OnEnable()
+    {
+        // 全局订阅所有 Grabbable 的碰撞事件（任何碰撞体碰到包裹时播放撞击音效）
+        foreach (var g in FindObjectsByType<Grabbable>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            SubscribeGrabbable(g);
+    }
+
+    void OnDisable()
+    {
+        foreach (var g in FindObjectsByType<Grabbable>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            UnsubscribeGrabbable(g);
+    }
+
+    void SubscribeGrabbable(Grabbable g)
+    {
+        if (g == null) return;
+        UnsubscribeGrabbable(g);
+        g.OnAnyCollision += OnGrabbableAnyCollision;
+    }
+
+    void UnsubscribeGrabbable(Grabbable g)
+    {
+        if (g == null) return;
+        g.OnAnyCollision -= OnGrabbableAnyCollision;
+    }
+
+    void OnGrabbableAnyCollision(Collision collision)
+    {
+        if (collision.rigidbody == null) return;
+        var g = collision.rigidbody.GetComponent<Grabbable>();
+        if (g == null) return;
+
+        // 不在投递区内也播放音效（掉落碰到地面/其他物体）
+        TryPlayImpactSound(g, collision);
+    }
+
     void OnTriggerEnter(Collider other)
     {
         var g = other.GetComponentInParent<Grabbable>();
         if (g == null) return;
+
+        // 订阅该包裹的碰撞事件（若尚未订阅）
+        SubscribeGrabbable(g);
 
         if (!_settleMap.TryGetValue(g, out var entry))
             entry = (0f, new HashSet<Collider>(), false);
@@ -42,14 +81,18 @@ public class PlaneGameDeliveryZone : MonoBehaviour
         entry.activeColliders.Add(other);
         _settleMap[g] = entry;
 
-        TryPlayImpactSound(g);
+        TryPlayImpactSound(g, null);
     }
 
-    void TryPlayImpactSound(Grabbable g)
+    void TryPlayImpactSound(Grabbable g, Collision collision)
     {
         if (impactClip == null || _audioSource == null) return;
         if (_impactPlayed.Contains(g)) return;
 
+        // 如果有碰撞信息，检查相对速度是否足够（排除静止接触）
+        if (collision != null && collision.relativeVelocity.sqrMagnitude < 0.01f) return;
+
+        // 被 Gripper 抓持时不播放
         if (IsStillHeldByGripper(g.Rigidbody)) return;
 
         _impactPlayed.Add(g);

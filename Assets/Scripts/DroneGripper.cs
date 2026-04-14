@@ -102,6 +102,24 @@ public class DroneGripper : MonoBehaviour
     /// <summary>由 PrepareForSceneTransition 在 LoadScene 前置位；新场景 DroneGripper 在 Start 里消费。</summary>
     public static bool PendingSimulatedGrabKeyAfterLoad { get; private set; }
 
+    /// <summary>跨场景自动抓取时，对应包裹的名称（用于在新场景中定位该包裹）。</summary>
+    public static string PendingHoldingPackageName { get; private set; }
+
+    /// <summary>供外部（如 StorageLoadingScreen）设置跨场景自动抓取标志。</summary>
+    public static void SetPendingSimulatedGrabKeyAfterLoad(string packageName = null)
+    {
+        PendingSimulatedGrabKeyAfterLoad = true;
+        PendingHoldingPackageName = packageName;
+    }
+
+    /// <summary>当前正在抓取的包裹名称（无抓取时为 null）。</summary>
+    public string HoldingPackageName => _holding != null ? _holding.name : null;
+
+    /// <summary>包裹被抓取时触发，参数为抓取时包裹的 Y 坐标世界值。</summary>
+    public event System.Action<float> OnPackageGrabbed;
+    /// <summary>包裹被释放时触发，参数为释放时包裹的 Rigidbody（用于损坏检测）。</summary>
+    public event System.Action<Rigidbody> OnPackageReleased;
+
     // --- Runtime state ---
     Rigidbody _droneRb;
     Grabbable _candidate;
@@ -169,6 +187,10 @@ public class DroneGripper : MonoBehaviour
         }
 
         // 你不需要运行时自动居中；避免在 Play 中修改 GrabPoint 位置导致抓取点偏差与抖动。
+        if (autoRecenterGrabPoint && useGrabPointTransformPosition)
+            autoRecenterGrabPoint = false;
+
+        // 你不需要运行时自动居中；避免在 Play 中修改 GrabPoint 位置导致抓取点偏差与抖动。
         // 仅允许在编辑状态（非 Play）且你手动开启时才执行一次。
 #if UNITY_EDITOR
         if (!Application.isPlaying && autoRecenterGrabPoint)
@@ -187,12 +209,88 @@ public class DroneGripper : MonoBehaviour
         }
     }
 
+    void OnEnable()
+    {
+        PlaneGameNarrativeDirector.OnGamePaused += HandleGamePaused;
+        PlaneGameNarrativeDirector.OnGameResumed += HandleGameResumed;
+    }
+
+    void OnDisable()
+    {
+        PlaneGameNarrativeDirector.OnGamePaused -= HandleGamePaused;
+        PlaneGameNarrativeDirector.OnGameResumed -= HandleGameResumed;
+    }
+
+    bool _isPaused;
+
+    void HandleGamePaused() { _isPaused = true; }
+    void HandleGameResumed() { _isPaused = false; }
+
     void Start()
     {
-        if (!simulateGrabKeyAfterSceneTransition || !PendingSimulatedGrabKeyAfterLoad)
+        Debug.Log($"[DroneGripper] Start: pendingFlag={PendingSimulatedGrabKeyAfterLoad}, packageName={PendingHoldingPackageName}");
+
+        if (simulateGrabKeyAfterSceneTransition && PendingSimulatedGrabKeyAfterLoad)
+        {
+            string targetName = PendingHoldingPackageName;
+            Debug.Log($"[DroneGripper] Start: 异步恢复抓取 '{targetName}'");
+
+            // 改为协程：在黑屏期间等待 grabPoint 就绪，然后模拟 F 键
+            StartCoroutine(CoRestoreGrabAfterLoad(targetName));
             return;
-        PendingSimulatedGrabKeyAfterLoad = false;
+        }
+
+        Debug.Log("[DroneGripper] Start: 强制触发模拟按 F（DEBUG）");
         StartCoroutine(CoQueueSimulatedGrabKeyAfterLoad());
+    }
+
+    /// <summary>
+    /// 跨场景后恢复抓取状态：
+    /// 等 grabPoint 就绪后立即模拟 F 键，和 CoQueueSimulatedGrabKeyAfterLoad 一样在黑屏期间触发。
+    /// </summary>
+    IEnumerator CoRestoreGrabAfterLoad(string targetName)
+    {
+        // 清除静态标志，避免新场景再次触发
+        PendingSimulatedGrabKeyAfterLoad = false;
+        PendingHoldingPackageName = null;
+
+        // 等待 grabPoint 初始化
+        int waitedFrames = 0;
+        while (grabPoint == null && waitedFrames < 30)
+        {
+            yield return null;
+            waitedFrames++;
+        }
+
+        if (grabPoint == null)
+        {
+            Debug.Log("[DroneGripper] CoRestoreGrabAfterLoad: grabPoint 仍未初始化，退出");
+            yield break;
+        }
+        Debug.Log($"[DroneGripper] CoRestoreGrabAfterLoad: grabPoint 已就绪 (帧数={waitedFrames})，模拟 F 键");
+
+        // 在新场景中找同名包裹
+        var candidates = Object.FindObjectsByType<Grabbable>(FindObjectsSortMode.None);
+        Grabbable target = null;
+        foreach (var c in candidates)
+        {
+            if (c.name == targetName)
+            {
+                target = c;
+                break;
+            }
+        }
+
+        if (target == null)
+        {
+            Debug.Log($"[DroneGripper] CoRestoreGrabAfterLoad: 未找到包裹 '{targetName}'，退出");
+            yield break;
+        }
+
+        _candidate = target;
+        // 模拟 F 键按下，下一帧 Update 会处理抓取流程（等待 IdleOpen 等）
+        _simulateGrabKeyDownPending = true;
+        Debug.Log($"[DroneGripper] CoRestoreGrabAfterLoad: 完成，IsHolding={IsHolding}");
     }
 
     IEnumerator CoQueueSimulatedGrabKeyAfterLoad()
@@ -236,6 +334,8 @@ public class DroneGripper : MonoBehaviour
 
     void Update()
     {
+        if (_isPaused) return;
+
         bool grabDown = Input.GetKeyDown(grabKey);
         if (_simulateGrabKeyDownPending)
         {
@@ -451,6 +551,9 @@ public class DroneGripper : MonoBehaviour
 
         Rigidbody boxRb = _holding.Rigidbody;
         if (boxRb == null) return;
+
+        // 通知外部包裹已被抓取（用于损坏检测：记录抓取时的 Y 值）
+        OnPackageGrabbed?.Invoke(boxRb.position.y);
 
         // 爪子/机械臂可能有碰撞体：即使我们把箱子对齐到 GrabPoint，
         // 碰撞解算也可能立刻把它推回去，让你看起来“没有移动到爪瓣中间”。
@@ -849,6 +952,8 @@ public class DroneGripper : MonoBehaviour
             _planeController?.SetInputEnabled(true);
 
         Rigidbody boxRb = _holding.Rigidbody;
+        // 通知外部包裹已被释放（用于损坏检测：接收 Rigidbody 以便在落地碰撞时计算落差）
+        OnPackageReleased?.Invoke(boxRb);
         _holding = null;
         _scheduledCandidate = null;
 

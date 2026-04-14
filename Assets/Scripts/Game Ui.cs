@@ -30,7 +30,7 @@ public class GameUi : MonoBehaviour
     [Tooltip("无人机信号增强时播放的音效")]
     [SerializeField] private AudioClip signalUpClip;
     [Tooltip("信号增强音效的音量（0~1）")]
-    [Range(0f, 1f)][SerializeField] private float signalUpVolume = 1f;
+    [Range(0f, 1f)][SerializeField] private float signalUpVolume = 0.6f;
     [Tooltip("信号增强音效从第几秒开始播放")]
     [SerializeField] private float signalUpStartTime = 0f;
 
@@ -275,6 +275,16 @@ public class GameUi : MonoBehaviour
     {
         countdownStarted = false;
         Debug.Log("游戏结束！");
+        StartCoroutine(ShowPowerDepletedDialogAfterDelay());
+    }
+
+    private IEnumerator ShowPowerDepletedDialogAfterDelay()
+    {
+        yield return new WaitForSecondsRealtime(1f);
+        if (BackupDialogEvents.Instance != null)
+            BackupDialogEvents.Instance.ShowPowerDepletedDialog();
+        else
+            Debug.LogWarning("[GameUi] BackupDialogEvents.Instance 为空，无法显示电量耗尽弹窗");
     }
 
     private void PlaySignalUpEffect()
