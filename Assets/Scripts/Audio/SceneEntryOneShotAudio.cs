@@ -35,6 +35,15 @@ public class SceneEntryOneShotAudio : MonoBehaviour
     [SerializeField] bool dialogAutoFitTextToVoiceEnd = true;
     [SerializeField] float dialogExtraSecondsAfterVoice = 1f;
 
+    [Header("路线规划小游戏")]
+    [Tooltip("开场 OneShot 播完后自动打开（见 RoutePlanningMiniGameController.OpenFromSceneEntry）")]
+    [SerializeField] bool openRoutePlanningAfterStartClip;
+    [SerializeField] RoutePlanningMiniGameController routePlanningAfterStartClip;
+    [Tooltip("在剪辑时长之外再多等几秒再开规划")]
+    [SerializeField] float extraSecondsAfterClipBeforeOpenPlanner;
+    [Tooltip("再等系统黑底对话播完再开规划，避免挡字幕")]
+    [SerializeField] bool waitForSystemDialogIdleBeforeOpenPlanner = true;
+
     void Awake()
     {
         if (audioSource == null)
@@ -66,23 +75,22 @@ public class SceneEntryOneShotAudio : MonoBehaviour
 
     void Start()
     {
-        if (clip == null)
-            return;
-
         if (HasAlreadyPlayedForSettings())
             return;
 
-        if (delaySeconds > 0f)
-            StartCoroutine(PlayAfterDelay());
-        else
-            PlayAndMarkDone();
+        bool wantPlanner = openRoutePlanningAfterStartClip && routePlanningAfterStartClip != null;
+        if (clip == null && !wantPlanner)
+            return;
+
+        StartCoroutine(EntryAudioAndOptionalPlannerRoutine());
     }
 
     string BuildDedupeKey()
     {
         if (!string.IsNullOrWhiteSpace(customDedupeKey))
             return customDedupeKey.Trim();
-        return $"{SceneManager.GetActiveScene().name}\u001f{clip.name}";
+        string clipPart = clip != null ? clip.name : "NoOneShotClip";
+        return $"{SceneManager.GetActiveScene().name}\u001f{clipPart}";
     }
 
     bool HasAlreadyPlayedForSettings()
@@ -114,10 +122,31 @@ public class SceneEntryOneShotAudio : MonoBehaviour
         MarkDone();
     }
 
-    IEnumerator PlayAfterDelay()
+    IEnumerator EntryAudioAndOptionalPlannerRoutine()
     {
-        yield return new WaitForSecondsRealtime(delaySeconds);
+        if (delaySeconds > 0f)
+            yield return new WaitForSecondsRealtime(delaySeconds);
+
         if (clip != null && audioSource != null)
+        {
             PlayAndMarkDone();
+            yield return new WaitForSecondsRealtime(clip.length + Mathf.Max(0f, extraSecondsAfterClipBeforeOpenPlanner));
+        }
+        else
+            yield return new WaitForSecondsRealtime(Mathf.Max(0f, extraSecondsAfterClipBeforeOpenPlanner));
+
+        if (!openRoutePlanningAfterStartClip || routePlanningAfterStartClip == null)
+            yield break;
+
+        if (waitForSystemDialogIdleBeforeOpenPlanner)
+        {
+            var dlg = FindObjectOfType<SystemDialogController>();
+            if (dlg != null)
+                yield return dlg.WaitUntilDialogIdle();
+        }
+
+        routePlanningAfterStartClip.OpenFromSceneEntry();
+        if (clip == null)
+            MarkDone();
     }
 }

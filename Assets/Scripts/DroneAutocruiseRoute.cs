@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -68,6 +69,97 @@ public class DroneAutocruiseRoute : MonoBehaviour
     public void ClearRuntimeWaypoints()
     {
         _runtimeWaypoints = null;
+    }
+
+    /// <summary>
+    /// 按当前场景里 <paramref name="waypointHierarchyRoot"/> 下的物体，用「与路线规划相同的叶子命名表」
+    /// 把链上每个 Transform 重新解析为同名节点。用于改场景坐标、替换航点物体后仍指向新实例。
+    /// </summary>
+    public void RefreshActiveWaypointChainAgainstHierarchy(Transform waypointHierarchyRoot)
+    {
+        if (waypointHierarchyRoot == null)
+            return;
+
+        Transform[] chain = _runtimeWaypoints != null && _runtimeWaypoints.Length > 0
+            ? _runtimeWaypoints
+            : waypoints;
+        if (chain == null || chain.Length == 0)
+            return;
+
+        RefreshTransformChainAgainstHierarchy(chain, waypointHierarchyRoot);
+    }
+
+    /// <summary>对任意航点链（例如规划刚提交的数组）按场景层级按名重新绑定 Transform。</summary>
+    public static void RefreshTransformChainAgainstHierarchy(Transform[] chain, Transform waypointHierarchyRoot)
+    {
+        if (chain == null || waypointHierarchyRoot == null)
+            return;
+
+        var byName = new Dictionary<string, Transform>();
+        CollectNamedWaypointLeaves(waypointHierarchyRoot, byName);
+
+        for (int i = 0; i < chain.Length; i++)
+        {
+            Transform t = chain[i];
+            if (t == null)
+                continue;
+
+            if (byName.TryGetValue(t.name, out Transform mapped) && mapped != null)
+            {
+                chain[i] = mapped;
+                continue;
+            }
+
+            Transform deep = FindFirstDescendantNamed(waypointHierarchyRoot, t.name);
+            if (deep != null)
+                chain[i] = deep;
+        }
+    }
+
+    static void CollectNamedWaypointLeaves(Transform root, Dictionary<string, Transform> outMap)
+    {
+        if (root == null)
+            return;
+
+        bool isLeaf = root.childCount == 0;
+        if (isLeaf && root.name != "start" && root.name != "end")
+        {
+            if (!outMap.ContainsKey(root.name))
+                outMap.Add(root.name, root);
+            return;
+        }
+
+        for (int i = 0; i < root.childCount; i++)
+            CollectNamedWaypointLeaves(root.GetChild(i), outMap);
+    }
+
+    /// <summary>在航点层级下解析一个名字：先匹配「非 start/end 的叶子」表（与规划器一致），否则深度优先第一个同名 Transform。</summary>
+    public static Transform ResolveWaypointTransformByName(Transform waypointHierarchyRoot, string transformName)
+    {
+        if (waypointHierarchyRoot == null || string.IsNullOrEmpty(transformName))
+            return null;
+
+        var byName = new Dictionary<string, Transform>();
+        CollectNamedWaypointLeaves(waypointHierarchyRoot, byName);
+        if (byName.TryGetValue(transformName, out Transform leaf) && leaf != null)
+            return leaf;
+        return FindFirstDescendantNamed(waypointHierarchyRoot, transformName);
+    }
+
+    static Transform FindFirstDescendantNamed(Transform root, string name)
+    {
+        if (root == null || string.IsNullOrEmpty(name))
+            return null;
+        if (root.name == name)
+            return root;
+        for (int i = 0; i < root.childCount; i++)
+        {
+            Transform hit = FindFirstDescendantNamed(root.GetChild(i), name);
+            if (hit != null)
+                return hit;
+        }
+
+        return null;
     }
 
 #if UNITY_EDITOR

@@ -90,9 +90,7 @@ public class GameUi : MonoBehaviour
         bool currentFirstPerson = IsFirstPersonMode();
 
         if (Input.GetKeyDown(KeyCode.Escape))
-        {
             ToggleUi();
-        }
 
         if (currentFirstPerson != isFirstPerson)
         {
@@ -231,6 +229,11 @@ public class GameUi : MonoBehaviour
 
     private void ToggleUi()
     {
+        if (RoutePlanningMiniGameController.IsPlanningUiOpen)
+            return;
+        if (FacadeRescueSessionState.IsOpen)
+            return;
+
         isUiVisible = !isUiVisible;
 
         if (windowUi != null)
@@ -245,6 +248,11 @@ public class GameUi : MonoBehaviour
                 frontSightUi.SetActive(!isUiVisible);
             }
         }
+
+        if (isUiVisible)
+            GlobalGamePause.Pause();
+        else
+            GlobalGamePause.Resume();
     }
 
     private void DecreasePower()

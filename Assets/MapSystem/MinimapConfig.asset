@@ -12,10 +12,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5392afcdd1543984bbc07c54af804a48, type: 3}
   m_Name: MinimapConfig
   m_EditorClassIdentifier: 
-  mapSprite: {fileID: 21300000, guid: 2743d1239e2eda34c9b4836aba7d8230, type: 3}
+  mapSprite: {fileID: 21300000, guid: 49d88bc08ade1474890c2f009307c0ba, type: 3}
   circularMaskSprite: {fileID: 21300000, guid: 52b1b28aaab59184f82fa927cab7bf4c, type: 3}
-  worldMin: {x: -487, y: -266}
-  worldMax: {x: 402, y: 214}
+  worldMin: {x: -535, y: -292}
+  worldMax: {x: 454, y: 237}
   mapRotationDegrees: 0
   normalizedOffset: {x: 0, y: 0}
   flipX: 0

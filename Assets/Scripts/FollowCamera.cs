@@ -14,6 +14,8 @@ public class FollowCamera : MonoBehaviour
     [SerializeField] bool lockCursor = true;
 
     [Header("相机避障")]
+    [Tooltip("是否启用第三人称相机避障。")]
+    [SerializeField] bool enableCollisionAvoidance = true;
     [Tooltip("相机距离障碍物的最小间隔")]
     [SerializeField] float collisionOffset = 0.1f;
     [Tooltip("避障检测的层级")]
@@ -53,24 +55,34 @@ public class FollowCamera : MonoBehaviour
     }
 
     /// <summary>
-    /// 计算避障后的安全相机位置。
-    /// 从目标位置向期望相机位置发射射线，检测障碍物并调整相机位置。
+    /// 从目标到期望相机位进行球形射线检测，命中时把相机放到障碍物前方。
     /// </summary>
     Vector3 GetCollisionSafePosition(Vector3 origin, Vector3 desired, float offset, LayerMask layers, float radius)
     {
+        if (!enableCollisionAvoidance)
+            return desired;
         Vector3 direction = desired - origin;
         float distance = direction.magnitude;
-        if (distance < 0.001f) return desired;
+        if (distance < 0.001f)
+            return desired;
 
         direction.Normalize();
-
-        // 球形射线检测，防止相机穿入障碍物
-        if (Physics.SphereCast(origin, radius, direction, out RaycastHit hit, distance, layers))
+        var hits = Physics.SphereCastAll(origin, radius, direction, distance, layers, QueryTriggerInteraction.Ignore);
+        RaycastHit? nearestValidHit = null;
+        foreach (var hit in hits)
         {
-            // 将相机放在障碍物表面之外，留出 offset 间隔
-            return hit.point - direction * (radius + offset);
+            var hitCollider = hit.collider;
+            if (hitCollider == null)
+                continue;
+            if (target != null && hitCollider.transform.IsChildOf(target))
+                continue;
+
+            if (!nearestValidHit.HasValue || hit.distance < nearestValidHit.Value.distance)
+                nearestValidHit = hit;
         }
 
+        if (nearestValidHit.HasValue)
+            return nearestValidHit.Value.point - direction * (radius + offset);
         return desired;
     }
 

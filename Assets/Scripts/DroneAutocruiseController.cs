@@ -1,3 +1,4 @@
+﻿using System;
 using UnityEngine;
 using System.Collections.Generic;
 
@@ -11,6 +12,12 @@ using System.Collections.Generic;
 [RequireComponent(typeof(Rigidbody))]
 public class DroneAutocruiseController : MonoBehaviour
 {
+    [Serializable]
+    public class SegmentCruiseEffect
+    {
+        public float speedScale = 1f;
+    }
+
     [SerializeField] PlaneController planeController;
     [SerializeField] DroneAutocruiseRoute route;
     [SerializeField] DroneGripper gripper;
@@ -22,13 +29,32 @@ public class DroneAutocruiseController : MonoBehaviour
     [Tooltip("进入此距离视为到达当前航点")]
     [SerializeField] float arrivalRadius = 2f;
 
+    [Header("航点与场景同步")]
+    [Tooltip("写入规划路线或按 Y 开始巡航前，按场景 Waypoint 层级用名字重新解析链上的 Transform（改坐标/替换物体后仍飞到当前场景节点）。")]
+    [SerializeField] bool refreshWaypointChainAgainstHierarchy = true;
+    [Tooltip("留空则使用名称 Waypoint 的根物体（与路线规划一致）。")]
+    [SerializeField] Transform waypointHierarchyRoot;
+
     [SerializeField] bool loopRoute = false;
+
+    [Tooltip("巡航开始时禁用的物体（如空气墙）。留空则在 Awake 时按名称 air 在场景中查找（含未激活）。")]
+    [SerializeField] GameObject airBarrierRoot;
 
     Rigidbody _rb;
     bool _cruising;
     int _waypointIndex;
     bool _inputEnabledBeforeCruise;
     bool _plannerInputBlocked;
+    SegmentCruiseEffect[] _segmentEffects;
+
+    /// <summary>非循环路线下飞完最后一个航点后触发（在 <see cref="EndCruise"/> 之前）。</summary>
+    public event Action OnAutocruiseRouteCompleted;
+
+    /// <summary>成功进入自动巡航时触发（含 Y 键、<see cref="TryStartCruiseFromExternal"/>、确认路线后立即起飞等）。</summary>
+    public event Action OnCruiseStarted;
+
+    /// <summary>退出巡航时触发（含飞完全程、手动取消、路线被清空等）；抵达终点时先于本事件触发 <see cref="OnAutocruiseRouteCompleted"/>。</summary>
+    public event Action OnCruiseStopped;
 
     void Awake()
     {
@@ -39,6 +65,19 @@ public class DroneAutocruiseController : MonoBehaviour
             gripper = GetComponentInChildren<DroneGripper>();
         if (followCamera == null)
             followCamera = FindObjectOfType<FollowCamera>();
+        if (airBarrierRoot == null)
+            airBarrierRoot = FindSceneObjectNamedAir();
+    }
+
+    static GameObject FindSceneObjectNamedAir()
+    {
+        foreach (var t in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (t != null && t.gameObject.name == "air")
+                return t.gameObject;
+        }
+
+        return null;
     }
 
     void OnDisable()
@@ -57,11 +96,20 @@ public class DroneAutocruiseController : MonoBehaviour
             if (_cruising)
                 EndCruise();
             else
-                TryStartCruise();
+                TryStartCruiseInternal();
         }
     }
 
-    void TryStartCruise()
+    /// <summary>由路线规划等脚本在规划 UI 关闭后启动巡航（与 Y 键逻辑一致）。</summary>
+    public bool TryStartCruiseFromExternal()
+    {
+        if (_plannerInputBlocked)
+            return false;
+        TryStartCruiseInternal();
+        return _cruising;
+    }
+
+    void TryStartCruiseInternal()
     {
         if (_plannerInputBlocked)
             return;
@@ -69,6 +117,8 @@ public class DroneAutocruiseController : MonoBehaviour
             return;
         if (gripper != null && gripper.IsHolding)
             return;
+
+        TryRefreshRouteChainAgainstWaypointHierarchy();
 
         _inputEnabledBeforeCruise = planeController != null && planeController.IsInputEnabled;
         _waypointIndex = 0;
@@ -79,6 +129,11 @@ public class DroneAutocruiseController : MonoBehaviour
             planeController.SetInputEnabled(false);
             planeController.SetAutocruiseActive(true);
         }
+
+        if (airBarrierRoot != null)
+            airBarrierRoot.SetActive(false);
+
+        OnCruiseStarted?.Invoke();
     }
 
     public void SetPlannerInputBlocked(bool blocked)
@@ -88,7 +143,21 @@ public class DroneAutocruiseController : MonoBehaviour
             EndCruise();
     }
 
+    /// <summary>规划路线写入前必须为 <see cref="route"/> 指定场景里的 <see cref="DroneAutocruiseRoute"/>，否则 <see cref="TryApplyPlannedRoute"/> 会失败。</summary>
+    public bool HasAutocruiseRouteAssigned() => route != null;
+
     public bool TryApplyPlannedRoute(IReadOnlyList<Transform> waypointChain, bool startCruiseImmediately = false)
+    {
+        return TryApplyPlannedRoute(waypointChain, null, startCruiseImmediately);
+    }
+
+    /// <summary>
+    /// 写入规划路线并可选附带每段速度倍率（段定义：route[i] -&gt; route[i+1]）。
+    /// </summary>
+    public bool TryApplyPlannedRoute(
+        IReadOnlyList<Transform> waypointChain,
+        IReadOnlyList<float> segmentSpeedScales,
+        bool startCruiseImmediately = false)
     {
         if (route == null || waypointChain == null || waypointChain.Count == 0)
             return false;
@@ -101,10 +170,63 @@ public class DroneAutocruiseController : MonoBehaviour
             arr[i] = waypointChain[i];
         }
 
+        if (refreshWaypointChainAgainstHierarchy)
+        {
+            Transform root = ResolveWaypointHierarchyRoot();
+            if (root != null)
+                DroneAutocruiseRoute.RefreshTransformChainAgainstHierarchy(arr, root);
+        }
+
         route.SetRuntimeWaypoints(arr);
+        _segmentEffects = BuildSegmentEffects(arr.Length, segmentSpeedScales);
         if (startCruiseImmediately)
-            TryStartCruise();
+            TryStartCruiseInternal();
         return true;
+    }
+
+    SegmentCruiseEffect[] BuildSegmentEffects(int waypointCount, IReadOnlyList<float> segmentSpeedScales)
+    {
+        int segmentCount = Mathf.Max(0, waypointCount - 1);
+        if (segmentCount == 0)
+            return null;
+
+        var effects = new SegmentCruiseEffect[segmentCount];
+        for (int i = 0; i < segmentCount; i++)
+        {
+            float s = 1f;
+            if (segmentSpeedScales != null && i < segmentSpeedScales.Count)
+                s = segmentSpeedScales[i];
+            effects[i] = new SegmentCruiseEffect
+            {
+                speedScale = Mathf.Clamp(s, 0.2f, 2.5f)
+            };
+        }
+
+        return effects;
+    }
+
+    Transform ResolveWaypointHierarchyRoot()
+    {
+        if (waypointHierarchyRoot != null)
+            return waypointHierarchyRoot;
+        GameObject go = GameObject.Find("Waypoint");
+        return go != null ? go.transform : null;
+    }
+
+    void TryRefreshRouteChainAgainstWaypointHierarchy()
+    {
+        if (!refreshWaypointChainAgainstHierarchy || route == null)
+            return;
+        Transform root = ResolveWaypointHierarchyRoot();
+        if (root == null)
+            return;
+        route.RefreshActiveWaypointChainAgainstHierarchy(root);
+    }
+
+    void EndCruiseAfterRouteCompleted()
+    {
+        OnAutocruiseRouteCompleted?.Invoke();
+        EndCruise();
     }
 
     void EndCruise()
@@ -120,6 +242,8 @@ public class DroneAutocruiseController : MonoBehaviour
             planeController.SetAutocruiseActive(false);
             planeController.SetInputEnabled(_inputEnabledBeforeCruise);
         }
+
+        OnCruiseStopped?.Invoke();
     }
 
     void FixedUpdate()
@@ -142,7 +266,7 @@ public class DroneAutocruiseController : MonoBehaviour
                     _waypointIndex = 0;
                 else
                 {
-                    EndCruise();
+                    EndCruiseAfterRouteCompleted();
                     return;
                 }
             }
@@ -166,7 +290,7 @@ public class DroneAutocruiseController : MonoBehaviour
                         _waypointIndex = 0;
                     else
                     {
-                        EndCruise();
+                        EndCruiseAfterRouteCompleted();
                         return;
                     }
                 }
@@ -187,10 +311,24 @@ public class DroneAutocruiseController : MonoBehaviour
                 Mathf.Clamp(local.x, -1f, 1f),
                 Mathf.Clamp(local.y, -1f, 1f),
                 Mathf.Clamp(local.z, -1f, 1f));
+
+            float segScale = ResolveCurrentSegmentSpeedScale(_waypointIndex);
+            axes *= segScale;
             if (axes.sqrMagnitude > 1e-6f)
                 axes = Vector3.ClampMagnitude(axes, 1f);
             planeController.SetAutocruiseAxes(axes);
             break;
         }
+    }
+
+    float ResolveCurrentSegmentSpeedScale(int targetWaypointIndex)
+    {
+        // _waypointIndex 表示当前“要飞到的点”索引；段索引 = target - 1（start->firstNode 为 0）。
+        int segIdx = targetWaypointIndex - 1;
+        if (_segmentEffects == null || segIdx < 0 || segIdx >= _segmentEffects.Length)
+            return 1f;
+
+        SegmentCruiseEffect e = _segmentEffects[segIdx];
+        return e != null ? Mathf.Clamp(e.speedScale, 0.2f, 2.5f) : 1f;
     }
 }

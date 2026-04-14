@@ -15,6 +15,7 @@ public class MissionObjectiveEntry
     public string id;
     public Transform target;
     public MissionObjectiveState state = MissionObjectiveState.Active;
+    public Sprite markerSprite;
 }
 
 public class MissionObjectiveProvider : MonoBehaviour
@@ -35,6 +36,33 @@ public class MissionObjectiveProvider : MonoBehaviour
                 return;
             }
         }
+    }
+
+    public void UpsertObjective(string id, Transform target, MissionObjectiveState state, Sprite markerSprite = null)
+    {
+        if (string.IsNullOrEmpty(id))
+            return;
+
+        for (int i = 0; i < objectives.Count; i++)
+        {
+            if (objectives[i].id == id)
+            {
+                objectives[i].target = target;
+                objectives[i].state = state;
+                objectives[i].markerSprite = markerSprite;
+                ObjectivesChanged?.Invoke();
+                return;
+            }
+        }
+
+        objectives.Add(new MissionObjectiveEntry
+        {
+            id = id,
+            target = target,
+            state = state,
+            markerSprite = markerSprite
+        });
+        ObjectivesChanged?.Invoke();
     }
 
     public void NotifyObjectivesChanged()

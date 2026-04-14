@@ -14,17 +14,6 @@ public class PlaneController : MonoBehaviour
     [Header("方向键蓄力加速")]
     [Tooltip("按住 A/D/W/S（水平面输入）时，从基础最大速度线性爬到峰值所需秒数")]
     [SerializeField] float boostRampDuration = 2f;
-    [Tooltip("蓄力过程中播放；达到最高速后由「最高速循环」接管（若未指定则满速后静音）")]
-    [SerializeField] AudioClip accelerationAudioClip;
-    [Tooltip("达到最高速后循环播放，直到松开方向键；留空则满速后停止音效")]
-    [SerializeField] AudioClip maxSpeedLoopAudioClip;
-    [Tooltip("留空则使用本物体上的 AudioSource；若仍为空且已指定任一 clip，则运行时自动添加 AudioSource")]
-    [SerializeField] AudioSource accelerationAudioSource;
-    [Header("满速转向音效")]
-    [Tooltip("仅在蓄力已满（峰值速度）时：从「未按 A/D」到「按下」的边缘触发；D=正放，A=同一段倒放")]
-    [SerializeField] AudioClip maxSpeedTurnAudioClip;
-    [Tooltip("独立音源，避免打断加速/巡航循环；留空则自动使用第二个 AudioSource")]
-    [SerializeField] AudioSource maxSpeedTurnAudioSource;
     [SerializeField] float acceleration = 28f;
     [SerializeField] float braking = 52f;
     [SerializeField] float drag = 1.2f;
@@ -32,6 +21,16 @@ public class PlaneController : MonoBehaviour
 
     [Header("松手保持高度")]
     [SerializeField] bool holdAltitudeWhenIdle = true;
+    [Tooltip("松开方向键后延迟锁定悬停（秒），用于保留一点惯性滑行")]
+    [SerializeField, Range(0f, 1f)] float idleHoverLockDelay = 0.18f;
+    [Tooltip("松开输入后的线性减速度（m/s^2）")]
+    [SerializeField, Range(0.5f, 40f)] float idleLinearDeceleration = 8f;
+    [Tooltip("idle 时的低速 drag（速度低时会趋近这个值）")]
+    [SerializeField, Range(0f, 2f)] float idleDragAtLowSpeed = 0.45f;
+    [Tooltip("idle 时的高速 drag（速度高时会趋近这个值，建议小于低速 drag）")]
+    [SerializeField, Range(0f, 2f)] float idleDragAtHighSpeed = 0.15f;
+    [Tooltip("速度低于该阈值才允许锁定悬停，避免高速时被硬性定住")]
+    [SerializeField, Range(0.05f, 3f)] float idleHoverLockSpeedThreshold = 0.35f;
     [SerializeField] float altitudeHoldStrength = 18f;
     [SerializeField] float altitudeHoldDamping = 6f;
     [Tooltip("悬停无人机模式：关闭重力，并锁定 X/Z 旋转避免侧翻")]
@@ -89,15 +88,21 @@ public class PlaneController : MonoBehaviour
     bool _verticalEnabled = true;
     float _planarBoostRamp01;
     bool _lastPlanarMovementActive;
-    AudioSource _resolvedAccelerationAudioSource;
-    AudioSource _resolvedTurnAudioSource;
-    float _prevHorizontalForTurnSfx;
     float _targetAltitude;
     Vector3 _lockedPosition;
     bool _isLockedHover;
+    float _idleTime;
     Vector3 _lastLocalInput;
     float _baseDrag;
     float _baseAngularDrag;
+    Vector3 _previousVelocity;
+    float _lastForwardSpeed;
+    float _lastAcceleration;
+    float _lastVerticalSpeed;
+    float _lastTurnRate;
+    float _lastThrottle;
+    float _lastHorizontalInput;
+    Vector3 _previousForward;
 
     void Awake()
     {
@@ -125,8 +130,8 @@ public class PlaneController : MonoBehaviour
             cameraTransform = Camera.main.transform;
 
         _gripper = GetComponentInChildren<DroneGripper>();
-        ResolveAccelerationAudioSource();
-        ResolveTurnAudioSource();
+        _previousVelocity = _rb.velocity;
+        _previousForward = transform.forward;
     }
 
     void OnDisable()
@@ -135,114 +140,12 @@ public class PlaneController : MonoBehaviour
             SpeedSideBlurGlobals.Intensity = 0f;
     }
 
-    void ResolveAccelerationAudioSource()
-    {
-        _resolvedAccelerationAudioSource = accelerationAudioSource;
-        if (_resolvedAccelerationAudioSource == null)
-            _resolvedAccelerationAudioSource = GetComponent<AudioSource>();
-        if (_resolvedAccelerationAudioSource == null &&
-            (accelerationAudioClip != null || maxSpeedLoopAudioClip != null))
-        {
-            _resolvedAccelerationAudioSource = gameObject.AddComponent<AudioSource>();
-            _resolvedAccelerationAudioSource.playOnAwake = false;
-        }
-    }
-
-    void ResolveTurnAudioSource()
-    {
-        if (maxSpeedTurnAudioClip == null)
-        {
-            _resolvedTurnAudioSource = null;
-            return;
-        }
-
-        _resolvedTurnAudioSource = maxSpeedTurnAudioSource;
-        if (_resolvedTurnAudioSource == _resolvedAccelerationAudioSource)
-            _resolvedTurnAudioSource = null;
-
-        if (_resolvedTurnAudioSource == null)
-        {
-            foreach (var s in GetComponents<AudioSource>())
-            {
-                if (s != _resolvedAccelerationAudioSource)
-                {
-                    _resolvedTurnAudioSource = s;
-                    break;
-                }
-            }
-        }
-
-        if (_resolvedTurnAudioSource == null)
-        {
-            _resolvedTurnAudioSource = gameObject.AddComponent<AudioSource>();
-            _resolvedTurnAudioSource.playOnAwake = false;
-        }
-    }
-
-    void MaybePlayMaxSpeedTurnEdge(float horizontalRaw)
-    {
-        if (maxSpeedTurnAudioClip == null || _resolvedTurnAudioSource == null)
-            return;
-        if (!_boostEnabled || _planarBoostRamp01 < 1f - 1e-4f)
-            return;
-
-        float dz = horizontalDeadzone;
-        bool nowRight = horizontalRaw > dz;
-        bool nowLeft = horizontalRaw < -dz;
-        bool prevRight = _prevHorizontalForTurnSfx > dz;
-        bool prevLeft = _prevHorizontalForTurnSfx < -dz;
-
-        if (nowRight && !prevRight)
-            PlayMaxSpeedTurnSfx(rightTurn: true);
-        else if (nowLeft && !prevLeft)
-            PlayMaxSpeedTurnSfx(rightTurn: false);
-    }
-
-    void PlayMaxSpeedTurnSfx(bool rightTurn)
-    {
-        if (maxSpeedTurnAudioClip == null || _resolvedTurnAudioSource == null)
-            return;
-
-        AudioSource src = _resolvedTurnAudioSource;
-        src.Stop();
-        src.clip = maxSpeedTurnAudioClip;
-        src.loop = false;
-        float len = maxSpeedTurnAudioClip.length;
-        if (len <= 0f)
-            return;
-
-        if (rightTurn)
-        {
-            src.pitch = 1f;
-            src.time = 0f;
-        }
-        else
-        {
-            src.pitch = -1f;
-            src.time = Mathf.Max(len - 0.0001f, 0f);
-        }
-
-        src.Play();
-    }
-
-    void StopTurnSfxAudio()
-    {
-        if (_resolvedTurnAudioSource == null)
-            return;
-        if (_resolvedTurnAudioSource.isPlaying)
-            _resolvedTurnAudioSource.Stop();
-        _resolvedTurnAudioSource.pitch = 1f;
-    }
-
     void FixedUpdate()
     {
         if (!_inputEnabled && !_autocruiseDriving)
         {
             _planarBoostRamp01 = 0f;
             _lastPlanarMovementActive = false;
-            _prevHorizontalForTurnSfx = 0f;
-            StopAccelerationAudio();
-            StopTurnSfxAudio();
             return;
         }
 
@@ -302,12 +205,28 @@ public class PlaneController : MonoBehaviour
             Mathf.Abs(z) < horizontalDeadzone &&
             Mathf.Abs(y) < verticalDeadzone;
 
+        if (isIdle)
+            _idleTime += Time.fixedDeltaTime;
+        else
+            _idleTime = 0f;
+
         UpdatePlanarBoostRamp(planarMovementActive);
         float effectiveMaxSpeed = ComputeEffectiveMaxSpeed();
 
-        MaybePlayMaxSpeedTurnEdge(x);
+        bool lockHoverNow =
+            holdAltitudeWhenIdle &&
+            isIdle &&
+            _idleTime >= idleHoverLockDelay &&
+            _rb.velocity.magnitude <= idleHoverLockSpeedThreshold;
 
-        bool lockHoverNow = holdAltitudeWhenIdle && isIdle;
+        if (isIdle && !lockHoverNow)
+        {
+            float speed = _rb.velocity.magnitude;
+            float speedRef = Mathf.Max(0.01f, effectiveMaxSpeed);
+            float t = Mathf.Clamp01(speed / speedRef);
+            float dynamicIdleDrag = Mathf.Lerp(idleDragAtLowSpeed, idleDragAtHighSpeed, t);
+            _rb.drag = Mathf.Min(_rb.drag, dynamicIdleDrag);
+        }
         if (lockHoverNow)
         {
             if (!_isLockedHover)
@@ -370,7 +289,11 @@ public class PlaneController : MonoBehaviour
                     // 抓取时减小“加速度响应”，降低与 FixedJoint 解算产生的微振动
                     float accelToUse = acceleration * holdingAccelerationMultiplier;
                     if (isIdle)
-                        accelToUse = braking * holdingAccelerationMultiplier;
+                    {
+                        float decelStep = idleLinearDeceleration * Time.fixedDeltaTime;
+                        _rb.velocity = Vector3.MoveTowards(_rb.velocity, Vector3.zero, decelStep);
+                        goto ClampHoldingVelocity;
+                    }
                     // no-op：占位字段引用，避免 holdingJointOffsetDamping 未使用警告
                     float jointOffsetNoOp = holdingJointOffsetDamping * 0f + 1f;
                     accelToUse *= jointOffsetNoOp;
@@ -381,8 +304,9 @@ public class PlaneController : MonoBehaviour
                     Vector3 currentVelocityWorld = _rb.velocity;
                     _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
 
+ClampHoldingVelocity:
                     float v = _rb.velocity.magnitude;
-                    if (v > effectiveMaxSpeed)
+                    if (!isIdle && v > effectiveMaxSpeed)
                         _rb.velocity = _rb.velocity.normalized * effectiveMaxSpeed;
                 }
                 else
@@ -394,17 +318,23 @@ public class PlaneController : MonoBehaviour
                     Vector3 desiredVelocityWorld = transform.TransformDirection(inputClamped) * effectiveMaxSpeed;
                     Vector3 currentVelocityWorld = _rb.velocity;
 
-                    float accelToUse = braking;
-                    if (!isIdle)
-                        accelToUse = acceleration;
+                    if (isIdle)
+                    {
+                        float decelStep = idleLinearDeceleration * Time.fixedDeltaTime;
+                        _rb.velocity = Vector3.MoveTowards(_rb.velocity, Vector3.zero, decelStep);
+                        goto ClampFreeVelocity;
+                    }
+
+                    float accelToUse = acceleration;
 
                     float effectiveMass = Mathf.Max(0.1f, _rb.mass);
                     float smoothing = accelToUse / effectiveMass;
                     float t = 1f - Mathf.Exp(-smoothing * Time.fixedDeltaTime);
                     _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
 
+ClampFreeVelocity:
                     float v = _rb.velocity.magnitude;
-                    if (v > effectiveMaxSpeed)
+                    if (!isIdle && v > effectiveMaxSpeed)
                         _rb.velocity = _rb.velocity.normalized * effectiveMaxSpeed;
                 }
             }
@@ -417,13 +347,21 @@ public class PlaneController : MonoBehaviour
                 float payloadMass = _gripper != null ? _gripper.HoldingMass : 0f;
                 float effectiveMass = Mathf.Max(0.1f, _rb.mass + payloadMass);
 
-                float accelToUse = isIdle ? braking : acceleration;
-                float smoothing = accelToUse / effectiveMass;
-                float t = 1f - Mathf.Exp(-smoothing * Time.fixedDeltaTime);
-                _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
+                if (isIdle)
+                {
+                    float decelStep = idleLinearDeceleration * Time.fixedDeltaTime;
+                    _rb.velocity = Vector3.MoveTowards(_rb.velocity, Vector3.zero, decelStep);
+                }
+                else
+                {
+                    float accelToUse = acceleration;
+                    float smoothing = accelToUse / effectiveMass;
+                    float t = 1f - Mathf.Exp(-smoothing * Time.fixedDeltaTime);
+                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
+                }
 
                 float v = _rb.velocity.magnitude;
-                if (v > effectiveMaxSpeed)
+                if (!isIdle && v > effectiveMaxSpeed)
                     _rb.velocity = _rb.velocity.normalized * effectiveMaxSpeed;
             }
         }
@@ -446,7 +384,25 @@ public class PlaneController : MonoBehaviour
             }
         }
 
-        _prevHorizontalForTurnSfx = x;
+        CacheTelemetry(x, y, z);
+        _lastHorizontalInput = x;
+    }
+
+    void CacheTelemetry(float horizontalInput, float verticalInput, float forwardInput)
+    {
+        float dt = Mathf.Max(Time.fixedDeltaTime, 1e-4f);
+        Vector3 velocity = _rb.velocity;
+
+        _lastForwardSpeed = Vector3.Dot(velocity, transform.forward);
+        _lastVerticalSpeed = velocity.y;
+        _lastAcceleration = Vector3.Dot((velocity - _previousVelocity) / dt, transform.forward);
+
+        float yawDelta = Vector3.SignedAngle(_previousForward, transform.forward, Vector3.up);
+        _lastTurnRate = yawDelta / dt;
+
+        _lastThrottle = Mathf.Clamp01(new Vector3(horizontalInput, verticalInput, forwardInput).magnitude);
+        _previousVelocity = velocity;
+        _previousForward = transform.forward;
     }
 
     void UpdatePlanarBoostRamp(bool planarActive)
@@ -454,20 +410,17 @@ public class PlaneController : MonoBehaviour
         if (!planarActive)
         {
             _planarBoostRamp01 = 0f;
-            StopAccelerationAudio();
             return;
         }
 
         if (!_boostEnabled)
         {
             _planarBoostRamp01 = 0f;
-            StopAccelerationAudio();
             return;
         }
 
         float dur = Mathf.Max(0.01f, boostRampDuration);
         _planarBoostRamp01 = Mathf.Min(1f, _planarBoostRamp01 + Time.fixedDeltaTime / dur);
-        SyncAccelerationAudio();
     }
 
     float ComputeEffectiveMaxSpeed()
@@ -476,57 +429,6 @@ public class PlaneController : MonoBehaviour
             return maxSpeed;
         float peak = maxSpeed * boostSpeedMultiplier;
         return Mathf.Lerp(maxSpeed, peak, _planarBoostRamp01);
-    }
-
-    void SyncAccelerationAudio()
-    {
-        if (_resolvedAccelerationAudioSource == null)
-            return;
-
-        const float rampEps = 1e-4f;
-        bool atFullRamp = _planarBoostRamp01 >= 1f - rampEps;
-        AudioSource src = _resolvedAccelerationAudioSource;
-
-        if (!atFullRamp)
-        {
-            if (accelerationAudioClip == null)
-            {
-                StopAccelerationAudio();
-                return;
-            }
-
-            if (!src.isPlaying || src.clip != accelerationAudioClip)
-            {
-                src.Stop();
-                src.clip = accelerationAudioClip;
-                src.loop = true;
-                src.Play();
-            }
-
-            return;
-        }
-
-        if (maxSpeedLoopAudioClip == null)
-        {
-            StopAccelerationAudio();
-            return;
-        }
-
-        if (!src.isPlaying || src.clip != maxSpeedLoopAudioClip)
-        {
-            src.Stop();
-            src.clip = maxSpeedLoopAudioClip;
-            src.loop = true;
-            src.Play();
-        }
-    }
-
-    void StopAccelerationAudio()
-    {
-        if (_resolvedAccelerationAudioSource == null)
-            return;
-        if (_resolvedAccelerationAudioSource.isPlaying)
-            _resolvedAccelerationAudioSource.Stop();
     }
 
     void LateUpdate()
@@ -562,7 +464,7 @@ public class PlaneController : MonoBehaviour
     /// <summary>禁用输入（如 Game Over 时）。</summary>
     public void SetInputEnabled(bool enabled) => _inputEnabled = enabled;
 
-    /// <summary>自动巡航：在 <see cref="SetInputEnabled"/>(false) 时仍驱动本组件物理（蓄力、音效与手动一致）。</summary>
+    /// <summary>自动巡航：在 <see cref="SetInputEnabled"/>(false) 时仍驱动本组件物理（蓄力与手动一致）。</summary>
     public void SetAutocruiseActive(bool active)
     {
         _autocruiseDriving = active;
@@ -598,6 +500,30 @@ public class PlaneController : MonoBehaviour
     /// <summary>用于侧向模糊等：蓄力进度 0~1（未允许峰值时为 0）。</summary>
     public float SpeedBlurAmount => _boostEnabled ? _planarBoostRamp01 : 0f;
 
+    /// <summary>前向速度（m/s，机体前方为正）。</summary>
+    public float ForwardSpeed => _lastForwardSpeed;
+
+    /// <summary>前向加速度（m/s^2）。</summary>
+    public float ForwardAcceleration => _lastAcceleration;
+
+    /// <summary>垂直速度（m/s，上升为正）。</summary>
+    public float VerticalSpeed => _lastVerticalSpeed;
+
+    /// <summary>偏航变化率（deg/s，右转为正）。</summary>
+    public float TurnRate => _lastTurnRate;
+
+    /// <summary>当前输入强度（0..1）。</summary>
+    public float Throttle01 => _lastThrottle;
+
+    /// <summary>上一物理帧水平输入（A/D，范围约 -1..1）。</summary>
+    public float HorizontalInputRaw => _lastHorizontalInput;
+
+    /// <summary>无人机基础巡航速度配置（m/s）。</summary>
+    public float BaseCruiseSpeed => maxSpeed;
+
+    /// <summary>无人机可达到的峰值巡航速度（m/s）：maxSpeed * boostSpeedMultiplier。</summary>
+    public float PeakCruiseSpeed => maxSpeed * boostSpeedMultiplier;
+
     /// <summary>重置位置与速度。</summary>
     public void ResetTo(Vector3 position, Quaternion rotation)
     {
@@ -612,11 +538,9 @@ public class PlaneController : MonoBehaviour
         _targetAltitude = position.y;
         _lockedPosition = position;
         _isLockedHover = false;
+        _idleTime = 0f;
         _planarBoostRamp01 = 0f;
         _lastPlanarMovementActive = false;
-        _prevHorizontalForTurnSfx = 0f;
-        StopAccelerationAudio();
-        StopTurnSfxAudio();
         _autocruiseDriving = false;
         _autocruiseAxesRaw = Vector3.zero;
         _rb.useGravity = !hoverDroneMode;

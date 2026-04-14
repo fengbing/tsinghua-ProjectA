@@ -1,53 +1,86 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Serialization;
-using UnityEngine.UI;
-using UnityEngine.Video;
 
 /// <summary>
-/// 窗口区第一段旁白；烟区第二段旁白与交互；Zone2 仅控制烟环境音；UI 在对应旁白播完后出现；第二次 F 播结束视频（加载/结束转场图），ESC 关闭；
-/// 若配置 Additive 小游戏：结束视频后可选先播一段音频再全屏转场图，最后进入小游戏场景；
-/// 结束视频流程正常播完后可启用预先禁用的场景模型。
+/// 烟区旁白；Zone2 控制烟环境音；火点触发区负责「按 F 开水」提示；
+/// 开水后对每处火累积灭火进度（按到火点距离衰减，可选喷嘴朝向）；火焰粒子强度随之变弱；无效喷射时进度缓慢回退；
+/// 全部熄灭后关水与音效，播收尾旁白，再播系统对话框（黑底 + 逐字 + 第二段音频）。
 /// </summary>
 public class WindowFireMission : MonoBehaviour
 {
+    /// <summary>
+    /// Triggered when all fires are extinguished and the post-fire narration clip (if configured) has finished.
+    /// </summary>
+    public event Action OnFireExtinguishAndNarrationFinished;
+    /// <summary>
+    /// Triggered immediately when player presses F and sprinkler/fire-extinguish sequence starts.
+    /// </summary>
+    public event Action OnFireExtinguishStarted;
+
     enum Phase
     {
-        Idle,
-        AwaitSprinklerF,
-        SprinklerSequenceRunning,
-        AwaitThermalF,
-        Done
+        Idle = 0,
+        AwaitSprinklerF = 1,
+        SprinklerSequenceRunning = 2,
+        Done = 3,
+        /// <summary>灭火与两段前置语音已结束，等待无人机进入立面小游戏触发区。</summary>
+        AwaitFacadeMinigameTrigger = 4,
     }
 
     [Header("UI")]
     [SerializeField] WindowFireDualPromptHud hud;
+    [Tooltip("留空则在场景里查找；灭火收尾旁白结束后用于系统提示（黑底 + 逐字 + 音频）。")]
+    [SerializeField] SystemDialogController systemDialog;
 
-    [Header("VFX (window)")]
-    [Tooltip("第一次按 F 后在此时间内用 emission 倍率渐灭，最后再彻底 Stop")]
-    [SerializeField] float fireFadeDuration = 3f;
-    [Tooltip("火焰完全熄灭后再等待此时长，关闭无人机水流与水声")]
-    [SerializeField] float waterStopDelayAfterFireOut = 0.5f;
+    [Header("VFX (fires)")]
+    [Tooltip("与 WindowFireExtinguishZone 的 fireIndex 一一对应。")]
     [SerializeField] List<ParticleSystem> fireEffects = new List<ParticleSystem>();
+
+    [Tooltip("在「浇水效果=1」的理想情况下，单点火从全旺到完全熄灭所需时间（秒）。")]
+    [FormerlySerializedAs("extinguishDwellSeconds")]
+    [SerializeField] float extinguishSecondsAtFullEffect = 3.5f;
+
+    [Tooltip("浇水效果不足时，灭火进度每秒回退量（0~1）；模拟离开有效喷射后火势回升。")]
+    [SerializeField] float extinguishProgressDecayPerSecond = 0.18f;
+
+    [Tooltip("超过该距离认为水打不到该火点，该火浇水强度为 0。")]
+    [SerializeField] float maxSprayToFireDistance = 12f;
+
+    [Tooltip("小于等于该距离时距离因子为 1；更远则线性减弱至最大距离处为 0。")]
+    [SerializeField] float optimalSprayToFireDistance = 2.5f;
+
+    [Tooltip("开启时：水粒子 forward 与指向火点方向越一致，该火浇水效果越好；关闭时朝向因子恒为 1。")]
+    [SerializeField] bool factorNozzleAlignmentToFire = false;
+
+    [Tooltip("喷射方向与指向火点方向点积低于该值时朝向因子为 0。")]
+    [SerializeField] float minAlignmentDotForCooling = 0.2f;
+
     [Tooltip("烟粒子；流程不会自动关闭；可配循环环境音")]
     [SerializeField] List<ParticleSystem> smokeEffects = new List<ParticleSystem>();
 
     [Header("VFX (drone)")]
-    [Tooltip("挂在无人机上；开局强制不喷，仅第一次按 F 后播放，结束后关闭")]
+    [Tooltip("挂在无人机上；开局强制不喷，按 F 后播放，全部火灭后关闭")]
     [FormerlySerializedAs("waterSpray")]
     [SerializeField] ParticleSystem droneWaterSpray;
 
     [Header("Audio — 旁白（分段）")]
     [SerializeField] AudioSource voiceSource;
-    [Tooltip("靠近窗口区域时播放，全流程仅一次")]
-    [FormerlySerializedAs("narrationOnApproach")]
-    [SerializeField] AudioClip narrationNearWindow;
-    [Tooltip("靠近烟交互区（SmokeApproach）时播放，全流程仅一次；对应旁白结束后才出第一段交互 UI")]
+    [Tooltip("靠近烟交互区（SmokeApproach）时播放，全流程仅一次")]
     [SerializeField] AudioClip narrationNearSmoke;
-    [Tooltip("灭火关水后播放，全流程仅一次；对应旁白结束后才出第二段交互 UI")]
-    [FormerlySerializedAs("narrationAfterExtinguish")]
+    [Tooltip("全部火点熄灭且水关闭后播放一次；不填则无")]
     [SerializeField] AudioClip narrationAfterFireOut;
+
+    [Header("收尾 — 系统提示（在上一段旁白播完后）")]
+    [Tooltip("系统对话框逐字显示的正文；可与下一条语音同步")]
+    [TextArea(2, 6)]
+    [SerializeField] string postMissionSystemPromptText;
+    [Tooltip("系统提示句的语音（由 SystemDialogController 播放）")]
+    [SerializeField] AudioClip postMissionSystemPromptClip;
+    [Tooltip("≤0 时用对话框默认间隔（约 0.04s/字）")]
+    [SerializeField] float postMissionSystemPromptCharInterval;
 
     [Header("Audio — 烟 (循环环境音，3D)")]
     [SerializeField] AudioClip smokeAmbienceLoop;
@@ -63,69 +96,38 @@ public class WindowFireMission : MonoBehaviour
     [SerializeField] AudioClip waterSprayLoop;
     [SerializeField] AudioSource waterAudioSource;
 
-    [Header("结束：视频 + 转场图（第二次按 F）")]
-    [Tooltip("第二次按 F 后播放；视频期间冻结场景；第二段转场淡出后回到游戏。按 ESC 可随时中断并恢复")]
-    [SerializeField] VideoClip endSequenceVideo;
-    [Tooltip("视频 Prepare/加载阶段全屏显示（淡入淡出）")]
-    [SerializeField] Sprite videoPrepareTransitionSprite;
-    [Tooltip("视频结束后全屏显示再淡出，随后关闭 UI 回到原场景")]
-    [SerializeField] Sprite videoFinishedTransitionSprite;
-    [Tooltip("转场图淡入时长（秒，不受 timeScale 影响）")]
-    [SerializeField] float transitionFadeInSeconds = 0.6f;
-    [Tooltip("转场图 / 视频层淡出时长（秒）")]
-    [SerializeField] float transitionFadeOutSeconds = 0.6f;
-    [Tooltip("加载转场图在 Prepare 完成后最少再显示时长（秒）")]
-    [SerializeField] float minPrepareTransitionSeconds = 0.35f;
-    [Tooltip("Prepare 超时（秒），避免卡死")]
-    [SerializeField] float videoPrepareTimeoutSeconds = 15f;
-    [SerializeField] int endScreenCanvasSortOrder = 400;
+    [Header("收尾")]
+    [Tooltip("停水后到播放 narrationAfterFireOut 之间的间隔（秒）")]
+    [FormerlySerializedAs("waterStopDelayAfterFireOut")]
+    [SerializeField] float missionEndLineDelayAfterWaterStop = 0.5f;
 
-    [Header("结束后 — 场景内模型")]
-    [Tooltip("结束视频与两段转场全部播完、回到场景后 SetActive(true)。可先禁用；数量按需要填写（常见为两个）。")]
-    [SerializeField] List<GameObject> activateAfterEndVideo = new List<GameObject>();
+    [Header("立面救援小游戏（可选）")]
+    [Tooltip("拖挂 FacadeRescueMiniGameController。非空时：灭火 → narrationAfterFireOut（可空）→ 系统提示（与无小游戏时相同）→ 无人机进触发区后打开小游戏；小游戏结束不再播系统提示。")]
+    [SerializeField] Component facadeRescueMinigame;
+    [Tooltip("立面小游戏触发器根物体（含 Collider、WindowFireFacadeMinigameTrigger 与子物体特效）。有立面小游戏时开局隐藏，灭火且「灭火后旁白 + 系统提示」都播完后再显示。留空则运行时按场景中物体名 Teleport_7 查找（含未激活）。")]
+    [SerializeField] GameObject facadeMinigameTriggerRoot;
 
-    [Header("结束后（可选）— Additive 小游戏")]
-    [Tooltip("非空时：结束视频与转场全部完成后，Additive 加载该场景；主场景不卸载，返回后机位不变。需加入 Build Settings；场景内用 MiniGameReturnController 返回。")]
-    [SerializeField] string postEndSequenceAdditiveMiniGameScene;
-    [Tooltip("勾选后主世界与小游戏 timeScale 都会为 0，小游戏内 SmoothDamp/部分 UI 刷新依赖 unscaledDeltaTime 虽仍可用，但易与 HUD/光标表现冲突。建议不勾选：只关主 UI/相机并 Kinematic 冻无人机。")]
-    [SerializeField] bool pauseWorldDuringAdditiveMiniGame;
-    [Tooltip("进入小游戏前播放（在转场图之前）；不填则跳过")]
-    [SerializeField] AudioClip preAdditiveMiniGameClip;
-    [Tooltip("播放入门音频用；不填则用 voiceSource")]
-    [SerializeField] AudioSource preAdditiveMiniGameAudioSource;
-    [Tooltip("音频之后全屏显示该图（淡入→停留→淡出）；不填则跳过")]
-    [SerializeField] Sprite preAdditiveMiniGameTransitionSprite;
-    [Tooltip("转场图完全显示后的停留时长（秒，不受 timeScale 影响）")]
-    [SerializeField] float preAdditiveMiniGameTransitionHoldSeconds = 0.35f;
+    /// <summary>当 Inspector 未指定 facadeMinigameTriggerRoot 时，按名 Teleport_7 解析一次并缓存。</summary>
+    GameObject _resolvedFacadeMinigameTriggerByName;
 
     Phase _phase = Phase.Idle;
-    int _windowZoneCount;
     int _smokeZoneCount;
     int _zone2AmbienceCount;
     bool _loadStarted;
-    bool _narrationNearWindowPlayed;
+    bool _facadeRescueOpened;
+    Coroutine _afterFacadeCo;
     bool _narrationNearSmokePlayed;
     bool _narrationAfterFirePlayed;
     AudioClip _lastVoiceClip;
     Coroutine _sprinklerRoutine;
     Coroutine _hudSprinklerDelayCo;
-    Coroutine _hudThermalDelayCo;
-    bool _endFullscreenActive;
-    GameObject _endFullscreenRoot;
-    Image _endTransitionImage;
-    CanvasGroup _transitionCanvasGroup;
-    RawImage _endVideoRaw;
-    CanvasGroup _videoCanvasGroup;
-    VideoPlayer _endVideoPlayer;
-    RenderTexture _endVideoRenderTexture;
-    AudioSource _endVideoAudioSource;
-    Coroutine _endVideoRoutine;
-    bool _endVideoLoopReached;
-    float _savedTimeScale = 1f;
-    bool _gameplayFrozenForEndVideo;
-    GameObject _preMiniGameBridgeRoot;
-    Image _preMiniGameBridgeImage;
-    CanvasGroup _preMiniGameBridgeGroup;
+
+    int _fireCount;
+    int[] _fireZoneDepth;
+    /// <summary>0 = 未浇灭，1 = 已完全浇灭阈值。</summary>
+    float[] _fireExtinguishProgress;
+    bool[] _fireAlive;
+    float[] _fireBaseEmissionMultiplier;
 
     public static bool IsDroneCollider(Collider other)
     {
@@ -140,20 +142,12 @@ public class WindowFireMission : MonoBehaviour
         switch (kind)
         {
             case WindowFireProximityZone.ZoneKind.WindowApproach:
-                _windowZoneCount++;
-                if (_windowZoneCount == 1 && !_narrationNearWindowPlayed && narrationNearWindow != null)
-                {
-                    PlayNarrationClip(narrationNearWindow, allowRepeatSameClip: false);
-                    _narrationNearWindowPlayed = true;
-                }
-
                 break;
 
             case WindowFireProximityZone.ZoneKind.SmokeApproach:
                 _smokeZoneCount++;
                 if (_smokeZoneCount == 1)
                 {
-                    // 离开烟区再进入时 count 也会从 0→1，只有「任务上第一次进烟」才是 Idle
                     if (_phase == Phase.Idle)
                         OnSmokeZoneFirstOccupantEntered();
                     else
@@ -179,13 +173,12 @@ public class WindowFireMission : MonoBehaviour
         switch (kind)
         {
             case WindowFireProximityZone.ZoneKind.WindowApproach:
-                _windowZoneCount = Mathf.Max(0, _windowZoneCount - 1);
                 break;
 
             case WindowFireProximityZone.ZoneKind.SmokeApproach:
                 _smokeZoneCount = Mathf.Max(0, _smokeZoneCount - 1);
                 StopHudDelayCoroutines();
-                if (_smokeZoneCount == 0 && hud != null)
+                if (!PromptZonesOccupied() && hud != null)
                     hud.Hide();
                 break;
 
@@ -197,6 +190,55 @@ public class WindowFireMission : MonoBehaviour
         }
     }
 
+    /// <summary>火点触发区进入（与 fireEffects 下标对应）。</summary>
+    public void NotifyFireExtinguishZoneEntered(int index)
+    {
+        if (_loadStarted || !IsValidFireIndex(index))
+            return;
+
+        _fireZoneDepth[index]++;
+        if (_fireZoneDepth[index] != 1)
+            return;
+
+        switch (_phase)
+        {
+            case Phase.Idle:
+                _phase = Phase.AwaitSprinklerF;
+                StopHudDelayCoroutines();
+                _hudSprinklerDelayCo = StartCoroutine(CoSprinklerHudAfterNarration());
+                break;
+            case Phase.AwaitSprinklerF:
+                StopHudDelayCoroutines();
+                if (hud != null)
+                {
+                    if (CanShowSprinklerPromptNow())
+                        hud.ShowSprinklerPrompt();
+                    else
+                        _hudSprinklerDelayCo = StartCoroutine(CoSprinklerHudAfterNarration());
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>火点触发区离开。</summary>
+    public void NotifyFireExtinguishZoneExited(int index)
+    {
+        if (_loadStarted || !IsValidFireIndex(index))
+            return;
+        if (_fireZoneDepth[index] <= 0)
+            return;
+
+        _fireZoneDepth[index]--;
+
+        if (!AnyFireZoneOccupied())
+        {
+            StopHudDelayCoroutines();
+            if (_smokeZoneCount <= 0 && hud != null)
+                hud.Hide();
+        }
+    }
+
     void OnSmokeZoneFirstOccupantEntered()
     {
         if (!_narrationNearSmokePlayed && narrationNearSmoke != null)
@@ -204,12 +246,6 @@ public class WindowFireMission : MonoBehaviour
             PlayNarrationClip(narrationNearSmoke, allowRepeatSameClip: false);
             _narrationNearSmokePlayed = true;
         }
-
-        if (_phase == Phase.Idle)
-            _phase = Phase.AwaitSprinklerF;
-
-        StopHudDelayCoroutines();
-        _hudSprinklerDelayCo = StartCoroutine(CoSprinklerHudAfterNarration());
     }
 
     void OnSmokeZoneReentered()
@@ -218,24 +254,38 @@ public class WindowFireMission : MonoBehaviour
             return;
 
         StopHudDelayCoroutines();
-        switch (_phase)
+        if (_phase == Phase.AwaitSprinklerF)
         {
-            case Phase.AwaitSprinklerF:
-                if (CanShowSprinklerPromptNow())
-                    hud.ShowSprinklerPrompt();
-                else
-                    _hudSprinklerDelayCo = StartCoroutine(CoSprinklerHudAfterNarration());
-                break;
-            case Phase.AwaitThermalF:
-                if (CanShowThermalPromptNow())
-                    hud.ShowThermalPrompt();
-                else
-                    _hudThermalDelayCo = StartCoroutine(CoThermalHudAfterNarration());
-                break;
-            default:
-                hud.Hide();
-                break;
+            if (CanShowSprinklerPromptNow())
+                hud.ShowSprinklerPrompt();
+            else
+                _hudSprinklerDelayCo = StartCoroutine(CoSprinklerHudAfterNarration());
         }
+        else
+            hud.Hide();
+    }
+
+    bool PromptZonesOccupied()
+    {
+        return _smokeZoneCount > 0 || AnyFireZoneOccupied();
+    }
+
+    bool AnyFireZoneOccupied()
+    {
+        if (_fireZoneDepth == null)
+            return false;
+        for (int i = 0; i < _fireZoneDepth.Length; i++)
+        {
+            if (_fireZoneDepth[i] > 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    bool IsValidFireIndex(int index)
+    {
+        return index >= 0 && index < _fireCount;
     }
 
     bool CanShowSprinklerPromptNow()
@@ -247,21 +297,12 @@ public class WindowFireMission : MonoBehaviour
         return !voiceSource.isPlaying || voiceSource.clip != narrationNearSmoke;
     }
 
-    bool CanShowThermalPromptNow()
-    {
-        if (narrationAfterFireOut == null)
-            return true;
-        if (voiceSource == null)
-            return true;
-        return !voiceSource.isPlaying || voiceSource.clip != narrationAfterFireOut;
-    }
-
     IEnumerator CoSprinklerHudAfterNarration()
     {
         if (narrationNearSmoke != null && voiceSource != null)
             yield return new WaitWhile(() => voiceSource.isPlaying && voiceSource.clip == narrationNearSmoke);
 
-        if (_smokeZoneCount <= 0 || _phase != Phase.AwaitSprinklerF || hud == null)
+        if (!PromptZonesOccupied() || _phase != Phase.AwaitSprinklerF || hud == null)
         {
             _hudSprinklerDelayCo = null;
             yield break;
@@ -271,33 +312,12 @@ public class WindowFireMission : MonoBehaviour
         _hudSprinklerDelayCo = null;
     }
 
-    IEnumerator CoThermalHudAfterNarration()
-    {
-        if (narrationAfterFireOut != null && voiceSource != null)
-            yield return new WaitWhile(() => voiceSource.isPlaying && voiceSource.clip == narrationAfterFireOut);
-
-        if (_smokeZoneCount <= 0 || _phase != Phase.AwaitThermalF || hud == null)
-        {
-            _hudThermalDelayCo = null;
-            yield break;
-        }
-
-        hud.ShowThermalPrompt();
-        _hudThermalDelayCo = null;
-    }
-
     void StopHudDelayCoroutines()
     {
         if (_hudSprinklerDelayCo != null)
         {
             StopCoroutine(_hudSprinklerDelayCo);
             _hudSprinklerDelayCo = null;
-        }
-
-        if (_hudThermalDelayCo != null)
-        {
-            StopCoroutine(_hudThermalDelayCo);
-            _hudThermalDelayCo = null;
         }
     }
 
@@ -329,12 +349,58 @@ public class WindowFireMission : MonoBehaviour
         if (zones.Length < 2)
         {
             Debug.LogWarning(
-                $"{nameof(WindowFireMission)}: 至少需要窗口区 + 烟交互区两个 {nameof(WindowFireProximityZone)}。烟环境音需再挂一个 Kind = Zone2SmokeAmbience 的触发区。",
+                $"{nameof(WindowFireMission)}: 至少需要烟交互区与一个 Kind = Zone2SmokeAmbience 的触发区（各一个 {nameof(WindowFireProximityZone)}）。窗口区触发器可选。",
                 this);
         }
 
+        InitFireRuntimeState();
         SetupSmoke3DAudio();
         StopDroneWaterImmediate();
+        ApplyFacadeMinigameTriggerInitialVisibility();
+    }
+
+    GameObject GetFacadeMinigameTriggerRootOrResolve()
+    {
+        if (facadeMinigameTriggerRoot != null)
+            return facadeMinigameTriggerRoot;
+        if (_resolvedFacadeMinigameTriggerByName != null)
+            return _resolvedFacadeMinigameTriggerByName;
+        foreach (var t in FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (t == null || t.gameObject.name != "Teleport_7")
+                continue;
+            _resolvedFacadeMinigameTriggerByName = t.gameObject;
+            break;
+        }
+
+        return _resolvedFacadeMinigameTriggerByName;
+    }
+
+    void ApplyFacadeMinigameTriggerInitialVisibility()
+    {
+        if (ResolveFacadeRescueEntry() == null)
+            return;
+        var root = GetFacadeMinigameTriggerRootOrResolve();
+        if (root == null)
+            return;
+        root.SetActive(false);
+    }
+
+    void InitFireRuntimeState()
+    {
+        _fireCount = fireEffects != null ? fireEffects.Count : 0;
+        _fireZoneDepth = new int[_fireCount];
+        _fireExtinguishProgress = new float[_fireCount];
+        _fireAlive = new bool[_fireCount];
+        _fireBaseEmissionMultiplier = new float[_fireCount];
+        for (int i = 0; i < _fireCount; i++)
+        {
+            _fireAlive[i] = fireEffects[i] != null;
+            if (fireEffects[i] != null)
+                _fireBaseEmissionMultiplier[i] = fireEffects[i].emission.rateOverTimeMultiplier;
+            else
+                _fireBaseEmissionMultiplier[i] = 1f;
+        }
     }
 
     void OnDisable()
@@ -348,28 +414,86 @@ public class WindowFireMission : MonoBehaviour
             _sprinklerRoutine = null;
         }
 
-        TeardownEndSequence();
-        TeardownPreMiniGameBridgeCanvas();
+        if (_afterFacadeCo != null)
+        {
+            StopCoroutine(_afterFacadeCo);
+            _afterFacadeCo = null;
+        }
+    }
+
+    /// <summary>由立面小游戏触发器调用；条件满足时打开小游戏且只触发一次。</summary>
+    public void TryOpenFacadeRescueFromTrigger()
+    {
+        var entry = ResolveFacadeRescueEntry();
+        if (entry == null)
+            return;
+        if (_loadStarted)
+            return;
+        if (_phase != Phase.AwaitFacadeMinigameTrigger)
+            return;
+        if (_facadeRescueOpened)
+            return;
+        _facadeRescueOpened = true;
+        entry.Open(this);
+    }
+
+    IFacadeRescueMinigameEntry ResolveFacadeRescueEntry()
+    {
+        if (facadeRescueMinigame != null)
+        {
+            if (facadeRescueMinigame is IFacadeRescueMinigameEntry direct)
+                return direct;
+            var onSame = facadeRescueMinigame.GetComponent<IFacadeRescueMinigameEntry>();
+            if (onSame != null)
+                return onSame;
+            var child = facadeRescueMinigame.GetComponentInChildren<IFacadeRescueMinigameEntry>(true);
+            if (child != null)
+                return child;
+        }
+
+        var any = FindObjectsByType<FacadeRescueMiniGameController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < any.Length; i++)
+        {
+            if (any[i] != null)
+                return any[i];
+        }
+
+        return null;
+    }
+
+    /// <summary>由立面救援小游戏在流程结束后调用（系统提示已在进小游戏前播过，此处仅收尾关门）。</summary>
+    public void NotifyFacadeRescueMinigameComplete()
+    {
+        if (_afterFacadeCo != null)
+            StopCoroutine(_afterFacadeCo);
+        _afterFacadeCo = StartCoroutine(CoAfterFacadeMinigame());
+    }
+
+    /// <summary>配置错误等导致小游戏未正常结束时，允许再次尝试进入触发区。</summary>
+    public void NotifyFacadeRescueMinigameAborted()
+    {
+        _facadeRescueOpened = false;
+    }
+
+    IEnumerator CoAfterFacadeMinigame()
+    {
+        _loadStarted = true;
+        _phase = Phase.Done;
+        _afterFacadeCo = null;
+        yield break;
     }
 
     void Update()
     {
-        if (_endFullscreenActive && Input.GetKeyDown(KeyCode.Escape))
-        {
-            TeardownEndSequence();
+        if (_loadStarted)
             return;
-        }
-
-        if (_smokeZoneCount <= 0 || _loadStarted)
+        if (!PromptZonesOccupied())
             return;
-
         if (!Input.GetKeyDown(KeyCode.F))
             return;
 
         if (_phase == Phase.AwaitSprinklerF)
             OnSprinklerConfirmed();
-        else if (_phase == Phase.AwaitThermalF)
-            OnThermalConfirmed();
     }
 
     void SetupSmoke3DAudio()
@@ -443,10 +567,19 @@ public class WindowFireMission : MonoBehaviour
     {
         if (_sprinklerRoutine != null)
             return;
-        _sprinklerRoutine = StartCoroutine(CoSprinklerSequence());
+        if (_fireCount == 0 || CountAliveFires() == 0)
+        {
+            Debug.LogWarning(
+                $"{nameof(WindowFireMission)}: 未配置有效 {nameof(fireEffects)}，无法开始灭火流程。",
+                this);
+            return;
+        }
+
+        _sprinklerRoutine = StartCoroutine(CoWaterActiveExtinguishLoop());
+        OnFireExtinguishStarted?.Invoke();
     }
 
-    IEnumerator CoSprinklerSequence()
+    IEnumerator CoWaterActiveExtinguishLoop()
     {
         _phase = Phase.SprinklerSequenceRunning;
         StopHudDelayCoroutines();
@@ -468,20 +601,47 @@ public class WindowFireMission : MonoBehaviour
             waterAudioSource.Play();
         }
 
-        float dur = Mathf.Max(0.05f, fireFadeDuration);
-        float t = 0f;
-        while (t < dur)
+        for (int i = 0; i < _fireCount; i++)
         {
-            t += Time.deltaTime;
-            float k = 1f - Mathf.Clamp01(t / dur);
-            ApplyFireEmissionMultiplier(k);
-            yield return null;
+            _fireExtinguishProgress[i] = 0f;
+            if (_fireAlive[i] && fireEffects[i] != null)
+                ApplyFireRemainingVisual(fireEffects[i], 1f, _fireBaseEmissionMultiplier[i]);
         }
 
-        SuppressEffects(fireEffects);
-        ResetFireEmissionMultipliers();
+        float fullEffectSeconds = Mathf.Max(0.2f, extinguishSecondsAtFullEffect);
+        const float extinguishDoneThreshold = 0.998f;
+        while (CountAliveFires() > 0)
+        {
+            float dt = GlobalGamePause.IsPaused ? Time.unscaledDeltaTime : Time.deltaTime;
+            for (int i = 0; i < _fireCount; i++)
+            {
+                if (!_fireAlive[i])
+                    continue;
+                var ps = fireEffects[i];
+                if (ps == null)
+                {
+                    _fireAlive[i] = false;
+                    continue;
+                }
 
-        yield return new WaitForSeconds(Mathf.Max(0f, waterStopDelayAfterFireOut));
+                float w = ComputeCoolingEffectiveness(ps.transform.position);
+                float p = _fireExtinguishProgress[i];
+                if (w > 0.001f)
+                    p += (dt / fullEffectSeconds) * w;
+                else
+                    p -= extinguishProgressDecayPerSecond * dt;
+                p = Mathf.Clamp01(p);
+                _fireExtinguishProgress[i] = p;
+
+                float remaining = 1f - p;
+                ApplyFireRemainingVisual(ps, remaining, _fireBaseEmissionMultiplier[i]);
+
+                if (p >= extinguishDoneThreshold)
+                    ExtinguishFireAtIndex(i);
+            }
+
+            yield return null;
+        }
 
         if (waterAudioSource != null)
             waterAudioSource.Stop();
@@ -492,42 +652,149 @@ public class WindowFireMission : MonoBehaviour
             droneWaterSpray.gameObject.SetActive(false);
         }
 
+        float tail = Mathf.Max(0f, missionEndLineDelayAfterWaterStop);
+        if (tail > 0f)
+        {
+            if (GlobalGamePause.IsPaused)
+                yield return new WaitForSecondsRealtime(tail);
+            else
+                yield return new WaitForSeconds(tail);
+        }
+
         if (!_narrationAfterFirePlayed && narrationAfterFireOut != null)
         {
             PlayNarrationClip(narrationAfterFireOut, allowRepeatSameClip: false);
             _narrationAfterFirePlayed = true;
+            if (voiceSource != null)
+                yield return new WaitWhile(() => voiceSource.isPlaying && voiceSource.clip == narrationAfterFireOut);
         }
 
-        _phase = Phase.AwaitThermalF;
-        StopHudDelayCoroutines();
-        _hudThermalDelayCo = StartCoroutine(CoThermalHudAfterNarration());
+        OnFireExtinguishAndNarrationFinished?.Invoke();
+
+        if (ResolveFacadeRescueEntry() != null)
+        {
+            yield return CoPostMissionSystemPrompt();
+            var triggerRoot = GetFacadeMinigameTriggerRootOrResolve();
+            if (triggerRoot != null)
+                triggerRoot.SetActive(true);
+            else
+            {
+                Debug.LogWarning(
+                    $"{nameof(WindowFireMission)}: 立面小游戏已启用但未配置 facadeMinigameTriggerRoot，且场景中未找到名为 Teleport_7 的物体。",
+                    this);
+            }
+
+            _phase = Phase.AwaitFacadeMinigameTrigger;
+            _sprinklerRoutine = null;
+            yield break;
+        }
+
+        yield return CoPostMissionSystemPrompt();
+
+        _loadStarted = true;
+        _phase = Phase.Done;
         _sprinklerRoutine = null;
     }
 
-    void ApplyFireEmissionMultiplier(float multiplier)
+    IEnumerator CoPostMissionSystemPrompt()
     {
-        if (fireEffects == null)
-            return;
-        foreach (var ps in fireEffects)
+        bool hasText = !string.IsNullOrEmpty(postMissionSystemPromptText);
+        bool hasVoice = postMissionSystemPromptClip != null;
+        if (!hasText && !hasVoice)
+            yield break;
+
+        var dlg = systemDialog != null ? systemDialog : FindObjectOfType<SystemDialogController>();
+        if (dlg == null)
         {
-            if (ps == null)
-                continue;
-            var em = ps.emission;
-            em.rateOverTimeMultiplier = multiplier;
+            Debug.LogWarning(
+                $"{nameof(WindowFireMission)}: 已配置系统提示文案或音频，但场景中无 {nameof(SystemDialogController)}。",
+                this);
+            yield break;
         }
+
+        float interval = postMissionSystemPromptCharInterval > 0f ? postMissionSystemPromptCharInterval : 0f;
+        dlg.PlaySingleLine(hasText ? postMissionSystemPromptText : string.Empty, postMissionSystemPromptClip, interval);
+        yield return dlg.WaitUntilDialogIdle();
     }
 
-    void ResetFireEmissionMultipliers()
+    int CountAliveFires()
     {
-        if (fireEffects == null)
-            return;
-        foreach (var ps in fireEffects)
+        int n = 0;
+        if (_fireAlive == null)
+            return 0;
+        for (int i = 0; i < _fireAlive.Length; i++)
         {
-            if (ps == null)
-                continue;
-            var em = ps.emission;
-            em.rateOverTimeMultiplier = 1f;
+            if (_fireAlive[i])
+                n++;
         }
+
+        return n;
+    }
+
+    void ExtinguishFireAtIndex(int index)
+    {
+        if (!IsValidFireIndex(index) || !_fireAlive[index])
+            return;
+        _fireAlive[index] = false;
+        _fireExtinguishProgress[index] = 0f;
+        var ps = fireEffects[index];
+        if (ps != null)
+            SuppressSingleFire(ps);
+    }
+
+    /// <summary>浇水对某火的相对强度 0~1：距离衰减 × 喷嘴朝向（朝向可关）。</summary>
+    float ComputeCoolingEffectiveness(Vector3 fireWorldPos)
+    {
+        if (droneWaterSpray == null)
+            return 0f;
+
+        Transform nozzle = droneWaterSpray.transform;
+        Vector3 nozzlePos = nozzle.position;
+        float distFactor = ComputeSprayDistanceFactor(nozzlePos, fireWorldPos);
+        if (distFactor <= 0.001f)
+            return 0f;
+
+        float alignFactor = 1f;
+        if (factorNozzleAlignmentToFire)
+        {
+            Vector3 toFire = fireWorldPos - nozzlePos;
+            if (toFire.sqrMagnitude < 1e-6f)
+                alignFactor = 1f;
+            else
+            {
+                float dot = Vector3.Dot(nozzle.forward, toFire.normalized);
+                alignFactor = Mathf.InverseLerp(minAlignmentDotForCooling, 1f, dot);
+                alignFactor = Mathf.Clamp01(alignFactor);
+            }
+        }
+
+        return Mathf.Clamp01(distFactor * alignFactor);
+    }
+
+    float ComputeSprayDistanceFactor(Vector3 nozzlePos, Vector3 fireWorldPos)
+    {
+        float dist = Vector3.Distance(nozzlePos, fireWorldPos);
+        if (dist > maxSprayToFireDistance)
+            return 0f;
+        float dMax = Mathf.Max(maxSprayToFireDistance, optimalSprayToFireDistance + 0.01f);
+        float dOpt = Mathf.Min(optimalSprayToFireDistance, dMax - 0.001f);
+        if (dist <= dOpt)
+            return 1f;
+        return 1f - Mathf.Clamp01((dist - dOpt) / (dMax - dOpt));
+    }
+
+    static void ApplyFireRemainingVisual(ParticleSystem ps, float remainingIntensity01, float baseEmissionMultiplier)
+    {
+        float k = Mathf.Clamp01(remainingIntensity01);
+        var em = ps.emission;
+        em.rateOverTimeMultiplier = Mathf.Max(0.04f, k) * baseEmissionMultiplier;
+    }
+
+    static void SuppressSingleFire(ParticleSystem ps)
+    {
+        var em = ps.emission;
+        em.enabled = false;
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
     }
 
     void StopDroneWaterImmediate()
@@ -538,397 +805,6 @@ public class WindowFireMission : MonoBehaviour
         main.playOnAwake = false;
         droneWaterSpray.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
         droneWaterSpray.gameObject.SetActive(false);
-    }
-
-    void OnThermalConfirmed()
-    {
-        if (endSequenceVideo == null)
-        {
-            Debug.LogWarning($"{nameof(WindowFireMission)}: 未设置 {nameof(endSequenceVideo)}，无法播放结束视频。", this);
-            return;
-        }
-
-        if (videoPrepareTransitionSprite == null || videoFinishedTransitionSprite == null)
-        {
-            Debug.LogWarning(
-                $"{nameof(WindowFireMission)}: 请设置 {nameof(videoPrepareTransitionSprite)} 与 {nameof(videoFinishedTransitionSprite)}。",
-                this);
-            return;
-        }
-
-        _loadStarted = true;
-        _phase = Phase.Done;
-        StopHudDelayCoroutines();
-        if (hud != null)
-            hud.Hide();
-
-        if (_endVideoRoutine != null)
-            StopCoroutine(_endVideoRoutine);
-        _endVideoRoutine = StartCoroutine(CoEndVideoWithTransitions());
-    }
-
-    IEnumerator CoEndVideoWithTransitions()
-    {
-        TeardownEndSequence();
-        BuildEndSequenceCanvas();
-        _endFullscreenActive = true;
-        RestoreGameplayTimeScale();
-
-        _endTransitionImage.sprite = videoPrepareTransitionSprite;
-        _transitionCanvasGroup.alpha = 0f;
-        _videoCanvasGroup.alpha = 0f;
-        _endVideoRaw.gameObject.SetActive(true);
-
-        _endVideoPlayer.clip = endSequenceVideo;
-        _endVideoPlayer.timeUpdateMode = VideoTimeUpdateMode.GameTime;
-        _endVideoPlayer.Prepare();
-
-        yield return FadeCanvasGroup(_transitionCanvasGroup, 0f, 1f, transitionFadeInSeconds);
-
-        float waited = 0f;
-        while (!_endVideoPlayer.isPrepared && waited < videoPrepareTimeoutSeconds)
-        {
-            waited += Time.unscaledDeltaTime;
-            yield return null;
-        }
-
-        if (!_endVideoPlayer.isPrepared)
-        {
-            Debug.LogError($"{nameof(WindowFireMission)}: 视频 Prepare 失败或超时。", this);
-            yield return FadeCanvasGroup(_transitionCanvasGroup, _transitionCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
-            TeardownEndSequence();
-            _endVideoRoutine = null;
-            yield break;
-        }
-
-        if (minPrepareTransitionSeconds > 0f)
-            yield return new WaitForSecondsRealtime(minPrepareTransitionSeconds);
-
-        yield return FadeCanvasGroup(_transitionCanvasGroup, _transitionCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
-
-        FreezeGameplayForEndVideo();
-        yield return FadeCanvasGroup(_videoCanvasGroup, 0f, 1f, transitionFadeInSeconds);
-        _endVideoLoopReached = false;
-        _endVideoPlayer.loopPointReached += OnEndVideoLoopPointReached;
-        _endVideoPlayer.Play();
-
-        yield return new WaitUntil(() => _endVideoLoopReached);
-
-        _endVideoPlayer.loopPointReached -= OnEndVideoLoopPointReached;
-        _endVideoPlayer.Stop();
-
-        // 全程保持冻结，直到第二段转场淡出完毕并在 Teardown 里恢复 timeScale
-        yield return FadeCanvasGroup(_videoCanvasGroup, _videoCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
-
-        _endTransitionImage.sprite = videoFinishedTransitionSprite;
-        yield return FadeCanvasGroup(_transitionCanvasGroup, 0f, 1f, transitionFadeInSeconds);
-
-        yield return FadeCanvasGroup(_transitionCanvasGroup, _transitionCanvasGroup.alpha, 0f, transitionFadeOutSeconds);
-
-        // 必须先清引用：TeardownEndSequence 会 StopCoroutine(_endVideoRoutine)，否则会停掉当前协程，后续音频/转场/小游戏不会执行
-        _endVideoRoutine = null;
-        TeardownEndSequence();
-        ActivateModelsAfterEndVideo();
-
-        if (!string.IsNullOrWhiteSpace(postEndSequenceAdditiveMiniGameScene))
-            yield return CoPreMiniGameBridgeThenAdditive();
-    }
-
-    IEnumerator CoPreMiniGameBridgeThenAdditive()
-    {
-        AudioSource src = preAdditiveMiniGameAudioSource != null ? preAdditiveMiniGameAudioSource : voiceSource;
-        if (preAdditiveMiniGameClip != null)
-        {
-            if (src == null)
-            {
-                Debug.LogWarning(
-                    $"{nameof(WindowFireMission)}: 已配置 {nameof(preAdditiveMiniGameClip)} 但无可用 AudioSource（可指定 {nameof(preAdditiveMiniGameAudioSource)} 或 {nameof(voiceSource)}）。",
-                    this);
-            }
-            else
-            {
-                src.Stop();
-                src.clip = preAdditiveMiniGameClip;
-                src.Play();
-                yield return new WaitWhile(() => src.isPlaying);
-            }
-        }
-
-        if (preAdditiveMiniGameTransitionSprite != null)
-        {
-            BuildPreMiniGameBridgeCanvas();
-            _preMiniGameBridgeImage.sprite = preAdditiveMiniGameTransitionSprite;
-            _preMiniGameBridgeGroup.alpha = 0f;
-            yield return FadeCanvasGroup(_preMiniGameBridgeGroup, 0f, 1f, transitionFadeInSeconds);
-            if (preAdditiveMiniGameTransitionHoldSeconds > 0f)
-                yield return new WaitForSecondsRealtime(preAdditiveMiniGameTransitionHoldSeconds);
-            yield return FadeCanvasGroup(_preMiniGameBridgeGroup, _preMiniGameBridgeGroup.alpha, 0f, transitionFadeOutSeconds);
-            TeardownPreMiniGameBridgeCanvas();
-        }
-
-        MiniGameAdditiveFlow.Begin(
-            postEndSequenceAdditiveMiniGameScene.Trim(),
-            pauseWorldDuringAdditiveMiniGame);
-    }
-
-    IEnumerator FadeCanvasGroup(CanvasGroup cg, float fromAlpha, float toAlpha, float duration)
-    {
-        if (cg == null)
-            yield break;
-
-        cg.alpha = fromAlpha;
-        bool visible = toAlpha > 0.01f;
-        cg.interactable = visible;
-        cg.blocksRaycasts = visible;
-
-        if (duration <= 0f)
-        {
-            cg.alpha = toAlpha;
-            visible = toAlpha > 0.01f;
-            cg.interactable = visible;
-            cg.blocksRaycasts = visible;
-            yield break;
-        }
-
-        float t = 0f;
-        while (t < duration)
-        {
-            t += Time.unscaledDeltaTime;
-            cg.alpha = Mathf.Lerp(fromAlpha, toAlpha, Mathf.Clamp01(t / duration));
-            yield return null;
-        }
-
-        cg.alpha = toAlpha;
-        visible = toAlpha > 0.01f;
-        cg.interactable = visible;
-        cg.blocksRaycasts = visible;
-    }
-
-    void FreezeGameplayForEndVideo()
-    {
-        if (_gameplayFrozenForEndVideo)
-            return;
-        _savedTimeScale = Time.timeScale;
-        Time.timeScale = 0f;
-        _gameplayFrozenForEndVideo = true;
-        if (_endVideoPlayer != null)
-            _endVideoPlayer.timeUpdateMode = VideoTimeUpdateMode.UnscaledGameTime;
-    }
-
-    void RestoreGameplayTimeScale()
-    {
-        if (!_gameplayFrozenForEndVideo)
-            return;
-        Time.timeScale = _savedTimeScale;
-        _gameplayFrozenForEndVideo = false;
-        if (_endVideoPlayer != null)
-            _endVideoPlayer.timeUpdateMode = VideoTimeUpdateMode.GameTime;
-    }
-
-    void OnEndVideoLoopPointReached(VideoPlayer source)
-    {
-        _endVideoLoopReached = true;
-    }
-
-    static void StretchChildFullScreen(Transform parent, GameObject go)
-    {
-        go.transform.SetParent(parent, false);
-        var r = go.GetComponent<RectTransform>();
-        r.anchorMin = Vector2.zero;
-        r.anchorMax = Vector2.one;
-        r.offsetMin = Vector2.zero;
-        r.offsetMax = Vector2.zero;
-    }
-
-    void BuildEndSequenceCanvas()
-    {
-        if (_endFullscreenRoot != null)
-            return;
-
-        var canvasGo = new GameObject("MissionEndVideoCanvas");
-        var canvas = canvasGo.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = endScreenCanvasSortOrder;
-        canvasGo.AddComponent<GraphicRaycaster>();
-        var scaler = canvasGo.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
-
-        // 转场与视频可同时为 alpha=0；底层黑场避免透视到游戏场景闪一帧
-        var backdropGo = new GameObject("EndSequenceBackdrop", typeof(RectTransform), typeof(Image));
-        StretchChildFullScreen(canvasGo.transform, backdropGo);
-        var backdropImage = backdropGo.GetComponent<Image>();
-        var white = Texture2D.whiteTexture;
-        backdropImage.sprite = Sprite.Create(
-            white,
-            new Rect(0f, 0f, white.width, white.height),
-            new Vector2(0.5f, 0.5f),
-            100f);
-        backdropImage.color = Color.black;
-        backdropImage.raycastTarget = false;
-
-        var transitionGo = new GameObject("TransitionImage", typeof(RectTransform), typeof(Image), typeof(CanvasGroup));
-        StretchChildFullScreen(canvasGo.transform, transitionGo);
-        _endTransitionImage = transitionGo.GetComponent<Image>();
-        _endTransitionImage.preserveAspect = true;
-        _endTransitionImage.raycastTarget = true;
-        _transitionCanvasGroup = transitionGo.GetComponent<CanvasGroup>();
-        _transitionCanvasGroup.alpha = 0f;
-        _transitionCanvasGroup.blocksRaycasts = false;
-        _transitionCanvasGroup.interactable = false;
-
-        var rawGo = new GameObject("VideoRawImage", typeof(RectTransform), typeof(RawImage), typeof(CanvasGroup));
-        StretchChildFullScreen(canvasGo.transform, rawGo);
-        _endVideoRaw = rawGo.GetComponent<RawImage>();
-        _endVideoRaw.raycastTarget = true;
-        _endVideoRaw.texture = null;
-        _videoCanvasGroup = rawGo.GetComponent<CanvasGroup>();
-        _videoCanvasGroup.alpha = 0f;
-        _videoCanvasGroup.blocksRaycasts = false;
-        _videoCanvasGroup.interactable = false;
-
-        var audioHost = new GameObject("VideoAudio");
-        audioHost.transform.SetParent(canvasGo.transform, false);
-        _endVideoAudioSource = audioHost.AddComponent<AudioSource>();
-        _endVideoAudioSource.playOnAwake = false;
-        _endVideoAudioSource.spatialBlend = 0f;
-
-        var vpHost = new GameObject("VideoPlayer");
-        vpHost.transform.SetParent(canvasGo.transform, false);
-        _endVideoPlayer = vpHost.AddComponent<VideoPlayer>();
-        _endVideoPlayer.playOnAwake = false;
-        _endVideoPlayer.isLooping = false;
-        _endVideoPlayer.renderMode = VideoRenderMode.RenderTexture;
-        _endVideoPlayer.audioOutputMode = VideoAudioOutputMode.AudioSource;
-        _endVideoPlayer.EnableAudioTrack(0, true);
-        _endVideoPlayer.SetTargetAudioSource(0, _endVideoAudioSource);
-
-        int w = (int)endSequenceVideo.width;
-        int h = (int)endSequenceVideo.height;
-        if (w <= 16 || h <= 16)
-        {
-            w = 1920;
-            h = 1080;
-        }
-
-        _endVideoRenderTexture = new RenderTexture(w, h, 0);
-        _endVideoPlayer.targetTexture = _endVideoRenderTexture;
-        _endVideoRaw.texture = _endVideoRenderTexture;
-
-        _endFullscreenRoot = canvasGo;
-    }
-
-    void BuildPreMiniGameBridgeCanvas()
-    {
-        if (_preMiniGameBridgeRoot != null)
-            return;
-
-        var canvasGo = new GameObject("PreMiniGameBridgeCanvas");
-        var canvas = canvasGo.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = endScreenCanvasSortOrder + 50;
-        canvasGo.AddComponent<GraphicRaycaster>();
-        var scaler = canvasGo.AddComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920, 1080);
-
-        var backdropGo = new GameObject("BridgeBackdrop", typeof(RectTransform), typeof(Image));
-        StretchChildFullScreen(canvasGo.transform, backdropGo);
-        var backdropImage = backdropGo.GetComponent<Image>();
-        var white = Texture2D.whiteTexture;
-        backdropImage.sprite = Sprite.Create(
-            white,
-            new Rect(0f, 0f, white.width, white.height),
-            new Vector2(0.5f, 0.5f),
-            100f);
-        backdropImage.color = Color.black;
-        backdropImage.raycastTarget = false;
-
-        var imgGo = new GameObject("BridgeTransition", typeof(RectTransform), typeof(Image), typeof(CanvasGroup));
-        StretchChildFullScreen(canvasGo.transform, imgGo);
-        _preMiniGameBridgeImage = imgGo.GetComponent<Image>();
-        _preMiniGameBridgeImage.preserveAspect = true;
-        _preMiniGameBridgeImage.raycastTarget = false;
-        _preMiniGameBridgeGroup = imgGo.GetComponent<CanvasGroup>();
-        _preMiniGameBridgeGroup.alpha = 0f;
-        _preMiniGameBridgeGroup.blocksRaycasts = false;
-        _preMiniGameBridgeGroup.interactable = false;
-
-        _preMiniGameBridgeRoot = canvasGo;
-    }
-
-    void TeardownPreMiniGameBridgeCanvas()
-    {
-        if (_preMiniGameBridgeRoot != null)
-            Destroy(_preMiniGameBridgeRoot);
-
-        _preMiniGameBridgeRoot = null;
-        _preMiniGameBridgeImage = null;
-        _preMiniGameBridgeGroup = null;
-    }
-
-    void TeardownEndSequence()
-    {
-        RestoreGameplayTimeScale();
-
-        if (_endVideoRoutine != null)
-        {
-            StopCoroutine(_endVideoRoutine);
-            _endVideoRoutine = null;
-        }
-
-        if (_endVideoPlayer != null)
-        {
-            _endVideoPlayer.loopPointReached -= OnEndVideoLoopPointReached;
-            _endVideoPlayer.Stop();
-            _endVideoPlayer.targetTexture = null;
-            _endVideoPlayer.clip = null;
-        }
-
-        if (_endVideoRenderTexture != null)
-        {
-            _endVideoRenderTexture.Release();
-            Destroy(_endVideoRenderTexture);
-            _endVideoRenderTexture = null;
-        }
-
-        if (_endFullscreenRoot != null)
-            Destroy(_endFullscreenRoot);
-
-        _endFullscreenRoot = null;
-        _endTransitionImage = null;
-        _transitionCanvasGroup = null;
-        _endVideoRaw = null;
-        _videoCanvasGroup = null;
-        _endVideoPlayer = null;
-        _endVideoAudioSource = null;
-        _endFullscreenActive = false;
-        _endVideoLoopReached = false;
-    }
-
-    static void SuppressEffects(List<ParticleSystem> systems)
-    {
-        if (systems == null)
-            return;
-        foreach (var ps in systems)
-        {
-            if (ps == null)
-                continue;
-            var em = ps.emission;
-            em.enabled = false;
-            ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-        }
-    }
-
-    void ActivateModelsAfterEndVideo()
-    {
-        if (activateAfterEndVideo == null)
-            return;
-        foreach (var go in activateAfterEndVideo)
-        {
-            if (go != null)
-                go.SetActive(true);
-        }
     }
 
     void PlayNarrationClip(AudioClip clip, bool allowRepeatSameClip)
