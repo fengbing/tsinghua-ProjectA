@@ -490,12 +490,13 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         }
 
         RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
+        string gradeDialog = ResolveEffectiveGradeDialogText(eval);
         bool hasGradeNarration = gradeVoice != null
-            && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeVoice.dialogText));
+            && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeDialog));
         if (hasGradeNarration)
         {
             _gradeNarrationAlreadyPlayed = true;
-            yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeVoice.dialogText);
+            yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeDialog);
         }
     }
 
@@ -806,6 +807,14 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         return routeGradeVoices[idx];
     }
 
+    string ResolveEffectiveGradeDialogText(RouteEvaluationResult eval)
+    {
+        RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
+        if (gradeVoice != null && !string.IsNullOrWhiteSpace(gradeVoice.dialogText))
+            return gradeVoice.dialogText.Trim();
+        return $"评级结果：{ResolveGradeName(eval.gradeIndex)}。预计总巡航时间 {eval.totalTime:0.0}s。";
+    }
+
     IEnumerator PostConfirmNarrationAndCruiseSequence(RouteEvaluationResult eval)
     {
         _confirmSequenceRunning = true;
@@ -814,10 +823,11 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         try
         {
             RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
+            string gradeDialog = ResolveEffectiveGradeDialogText(eval);
             bool hasGradeNarration = gradeVoice != null
-                && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeVoice.dialogText));
+                && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeDialog));
             if (hasGradeNarration && !_gradeNarrationAlreadyPlayed)
-                yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeVoice.dialogText);
+                yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeDialog);
             if (autoCloseOnConfirm)
                 ClosePlanningMode();
             yield return PlayNarrationOrDialogCoroutine(afterPlannerCloseClip, afterPlannerCloseDialogText);
@@ -844,10 +854,10 @@ public class RoutePlanningMiniGameController : MonoBehaviour
 
     string BuildRouteSubmittedFeedback(RouteEvaluationResult eval)
     {
-        RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
         string grade = string.IsNullOrWhiteSpace(eval.gradeName) ? $"第{eval.gradeIndex + 1}档" : eval.gradeName.Trim();
-        if (gradeVoice != null && !string.IsNullOrWhiteSpace(gradeVoice.dialogText))
-            return $"路线已提交（{grade}，预计总巡航时间 {eval.totalTime:0.0}s）。{gradeVoice.dialogText.Trim()}";
+        string gradeDialog = ResolveEffectiveGradeDialogText(eval);
+        if (!string.IsNullOrWhiteSpace(gradeDialog))
+            return $"路线已提交（{grade}，预计总巡航时间 {eval.totalTime:0.0}s）。{gradeDialog}";
         return $"路线已提交（{grade}，预计总巡航时间 {eval.totalTime:0.0}s）。";
     }
 

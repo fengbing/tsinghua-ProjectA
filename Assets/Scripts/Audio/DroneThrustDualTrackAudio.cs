@@ -245,6 +245,7 @@ public class DroneThrustDualTrackAudio : MonoBehaviour
         motorSource.clip = motorClip;
         motorSource.loop = true;
         motorSource.playOnAwake = false;
+        motorSource.volume = 0f;
         motorSource.spatialBlend = 0f;
         motorSource.outputAudioMixerGroup = outputMixerGroup;
     }

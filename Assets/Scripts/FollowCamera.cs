@@ -31,6 +31,13 @@ public class FollowCamera : MonoBehaviour
     [Header("自动巡航视角辅助")]
     [Tooltip("巡航时水平视角转向下一航点；在鼠标输入之后叠加，仍可用鼠标微调")]
     [SerializeField] float cruiseLookAssistDegreesPerSecond = 90f;
+    [Header("开场稳定")]
+    [Tooltip("启用后，进入场景首帧会将相机硬对齐到目标位姿，避免开场抖动。")]
+    [SerializeField] bool snapOnStart = true;
+    [Tooltip("锁定光标后的鼠标输入抑制时长（秒），用于消除首帧输入尖峰。")]
+    [SerializeField] float mouseInputSuppressSecondsOnStart = 0.12f;
+    [Tooltip("开场稳定窗口（秒）：窗口内每帧直接对齐目标，不使用平滑追赶。")]
+    [SerializeField] float startupDirectFollowSeconds = 0.25f;
 
     Vector3 _vel;
     float _yaw;
@@ -40,12 +47,18 @@ public class FollowCamera : MonoBehaviour
     bool _isPaused;
     bool _autocruiseLookAssist;
     Vector3 _autocruiseLookWorldPoint;
+    bool _didInitialSnap;
+    float _suppressMouseInputUntilRealtime;
+    float _startupDirectFollowUntilRealtime;
 
     void Start()
     {
         var euler = transform.rotation.eulerAngles;
         _yaw = euler.y;
         _pitch = euler.x;
+        _suppressMouseInputUntilRealtime = Time.realtimeSinceStartup + Mathf.Max(0f, mouseInputSuppressSecondsOnStart);
+        _startupDirectFollowUntilRealtime = Time.realtimeSinceStartup + Mathf.Max(0f, startupDirectFollowSeconds);
+        _didInitialSnap = false;
 
         if (lockCursor)
         {
@@ -90,11 +103,32 @@ public class FollowCamera : MonoBehaviour
     {
         if (target == null || _isPaused) return;
 
+        if (snapOnStart && !_didInitialSnap)
+        {
+            Quaternion startRotation = Quaternion.Euler(_pitch, _yaw, 0f);
+            Vector3 snapPos;
+            if (_firstPersonMode)
+            {
+                snapPos = target.position + target.TransformDirection(firstPersonOffset);
+            }
+            else
+            {
+                Vector3 desired = target.position + startRotation * offset;
+                snapPos = GetCollisionSafePosition(target.position, desired, collisionOffset, collisionLayers, cameraRadius);
+            }
+
+            transform.SetPositionAndRotation(snapPos, startRotation);
+            _vel = Vector3.zero;
+            _didInitialSnap = true;
+            return;
+        }
+
         if (Input.GetKeyDown(KeyCode.LeftAlt) || Input.GetKeyDown(KeyCode.RightAlt))
             _firstPersonMode = !_firstPersonMode;
 
-        float mouseX = _mouseLookEnabled ? Input.GetAxis("Mouse X") : 0f;
-        float mouseY = _mouseLookEnabled ? Input.GetAxis("Mouse Y") : 0f;
+        bool suppressMouse = Time.realtimeSinceStartup < _suppressMouseInputUntilRealtime;
+        float mouseX = (_mouseLookEnabled && !suppressMouse) ? Input.GetAxis("Mouse X") : 0f;
+        float mouseY = (_mouseLookEnabled && !suppressMouse) ? Input.GetAxis("Mouse Y") : 0f;
         _yaw += mouseX * mouseSensitivity * Time.deltaTime;
         _pitch -= mouseY * mouseSensitivity * Time.deltaTime;
         _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
@@ -117,18 +151,35 @@ public class FollowCamera : MonoBehaviour
         }
 
         Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0f);
+        bool inStartupDirectFollowWindow = Time.realtimeSinceStartup < _startupDirectFollowUntilRealtime;
 
         if (_firstPersonMode)
         {
             Vector3 desiredPos = target.position + target.TransformDirection(firstPersonOffset);
-            transform.position = Vector3.SmoothDamp(transform.position, desiredPos, ref _vel, firstPersonSmoothTime);
+            if (inStartupDirectFollowWindow)
+            {
+                transform.position = desiredPos;
+                _vel = Vector3.zero;
+            }
+            else
+            {
+                transform.position = Vector3.SmoothDamp(transform.position, desiredPos, ref _vel, firstPersonSmoothTime);
+            }
             transform.rotation = rotation;
         }
         else
         {
             Vector3 desired = target.position + rotation * offset;
             Vector3 safePosition = GetCollisionSafePosition(target.position, desired, collisionOffset, collisionLayers, cameraRadius);
-            transform.position = Vector3.SmoothDamp(transform.position, safePosition, ref _vel, smoothTime);
+            if (inStartupDirectFollowWindow)
+            {
+                transform.position = safePosition;
+                _vel = Vector3.zero;
+            }
+            else
+            {
+                transform.position = Vector3.SmoothDamp(transform.position, safePosition, ref _vel, smoothTime);
+            }
             transform.rotation = rotation;
         }
     }
