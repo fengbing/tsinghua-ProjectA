@@ -140,7 +140,7 @@ public class SceneEntryOneShotAudio : MonoBehaviour
 
         if (waitForSystemDialogIdleBeforeOpenPlanner)
         {
-            var dlg = FindObjectOfType<SystemDialogController>();
+            var dlg = SystemDialogLocator.FindPresentation();
             if (dlg != null)
                 yield return dlg.WaitUntilDialogIdle();
         }

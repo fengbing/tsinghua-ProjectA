@@ -216,8 +216,8 @@ public class RoutePlanningMiniGameController : MonoBehaviour
     [SerializeField] AudioSource routeNarrationAudio;
 
     [Header("系统对话框（与 Scene Entry 同款黑底打字）")]
-    [Tooltip("留空则在运行时尝试 Find；与 SystemDialogController 同场景即可")]
-    [SerializeField] SystemDialogController systemDialog;
+    [Tooltip("可拖 SystemDialogController 或 SystemDialogController2；留空则运行时按场景查找（优先 2 再 1）")]
+    [SerializeField] Component systemDialog;
     [Tooltip("勾选后按语音长度自动摊字间隔（与 SceneEntryDialogTrigger 一致）")]
     [SerializeField] bool routeDialogAutoFitToVoiceEnd;
     [SerializeField] float routeDialogExtraSecondsAfterVoice = 1f;
@@ -270,6 +270,13 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         public string gradeName;
     }
 
+    ISystemDialogPresentation ResolveSystemDialogPresentation()
+    {
+        if (systemDialog is ISystemDialogPresentation p)
+            return p;
+        return SystemDialogLocator.FindPresentation();
+    }
+
     void Awake()
     {
         if (Application.isPlaying)
@@ -279,7 +286,7 @@ public class RoutePlanningMiniGameController : MonoBehaviour
             if (autocruiseController == null)
                 autocruiseController = FindFirstObjectByType<DroneAutocruiseController>();
             if (systemDialog == null)
-                systemDialog = FindFirstObjectByType<SystemDialogController>();
+                systemDialog = SystemDialogLocator.FindComponent();
             if (minimapUi == null)
                 minimapUi = FindFirstObjectByType<MinimapUiController>();
             EnsurePlanningClickAudio();
@@ -490,13 +497,12 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         }
 
         RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
-        string gradeDialog = ResolveEffectiveGradeDialogText(eval);
         bool hasGradeNarration = gradeVoice != null
-            && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeDialog));
+            && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeVoice.dialogText));
         if (hasGradeNarration)
         {
             _gradeNarrationAlreadyPlayed = true;
-            yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeDialog);
+            yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeVoice.dialogText);
         }
     }
 
@@ -595,7 +601,7 @@ public class RoutePlanningMiniGameController : MonoBehaviour
     }
 
     /// <summary>
-    /// 开场流程用：等当前 <see cref="SystemDialogController"/> 播完后再打开规划，避免全屏 UI 压住字幕。
+    /// 开场流程用：等当前系统对话框播完后再打开规划，避免全屏 UI 压住字幕。
     /// </summary>
     public void OpenFromSceneEntry()
     {
@@ -611,9 +617,10 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         try
         {
             if (systemDialog == null)
-                systemDialog = FindFirstObjectByType<SystemDialogController>();
-            if (systemDialog != null)
-                yield return systemDialog.WaitUntilDialogIdle();
+                systemDialog = SystemDialogLocator.FindComponent();
+            var dlg = ResolveSystemDialogPresentation();
+            if (dlg != null)
+                yield return dlg.WaitUntilDialogIdle();
             if (_isOpen)
                 yield break;
             OpenPlanningMode();
@@ -772,16 +779,17 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         yield return new WaitWhile(() => routeNarrationAudio.isPlaying);
     }
 
-    /// <summary>有字幕且存在 <see cref="systemDialog"/> 时走黑底打字+对话语音；否则走 <see cref="routeNarrationAudio"/>。</summary>
+    /// <summary>有字幕且存在系统对话框时走黑底打字+对话语音；否则走 <see cref="routeNarrationAudio"/>。</summary>
     IEnumerator PlayNarrationOrDialogCoroutine(AudioClip clip, string dialogText)
     {
-        if (systemDialog != null && !string.IsNullOrWhiteSpace(dialogText))
+        var dlg = ResolveSystemDialogPresentation();
+        if (dlg != null && !string.IsNullOrWhiteSpace(dialogText))
         {
             float ch = routeDialogCharacterInterval > 0f ? routeDialogCharacterInterval : 0.04f;
             if (routeDialogAutoFitToVoiceEnd && clip != null)
                 ch = SystemDialogCue.CharacterIntervalToMatchVoice(dialogText.Trim(), clip, routeDialogExtraSecondsAfterVoice);
-            systemDialog.PlaySingleLine(dialogText.Trim(), clip, ch);
-            yield return systemDialog.WaitUntilDialogIdle();
+            dlg.PlaySingleLine(dialogText.Trim(), clip, ch);
+            yield return dlg.WaitUntilDialogIdle();
             yield break;
         }
 
@@ -807,14 +815,6 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         return routeGradeVoices[idx];
     }
 
-    string ResolveEffectiveGradeDialogText(RouteEvaluationResult eval)
-    {
-        RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
-        if (gradeVoice != null && !string.IsNullOrWhiteSpace(gradeVoice.dialogText))
-            return gradeVoice.dialogText.Trim();
-        return $"评级结果：{ResolveGradeName(eval.gradeIndex)}。预计总巡航时间 {eval.totalTime:0.0}s。";
-    }
-
     IEnumerator PostConfirmNarrationAndCruiseSequence(RouteEvaluationResult eval)
     {
         _confirmSequenceRunning = true;
@@ -823,11 +823,10 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         try
         {
             RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
-            string gradeDialog = ResolveEffectiveGradeDialogText(eval);
             bool hasGradeNarration = gradeVoice != null
-                && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeDialog));
+                && (gradeVoice.voiceClip != null || !string.IsNullOrWhiteSpace(gradeVoice.dialogText));
             if (hasGradeNarration && !_gradeNarrationAlreadyPlayed)
-                yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeDialog);
+                yield return PlayNarrationOrDialogCoroutine(gradeVoice.voiceClip, gradeVoice.dialogText);
             if (autoCloseOnConfirm)
                 ClosePlanningMode();
             yield return PlayNarrationOrDialogCoroutine(afterPlannerCloseClip, afterPlannerCloseDialogText);
@@ -854,10 +853,10 @@ public class RoutePlanningMiniGameController : MonoBehaviour
 
     string BuildRouteSubmittedFeedback(RouteEvaluationResult eval)
     {
+        RouteGradeVoice gradeVoice = ResolveGradeVoice(eval.gradeIndex);
         string grade = string.IsNullOrWhiteSpace(eval.gradeName) ? $"第{eval.gradeIndex + 1}档" : eval.gradeName.Trim();
-        string gradeDialog = ResolveEffectiveGradeDialogText(eval);
-        if (!string.IsNullOrWhiteSpace(gradeDialog))
-            return $"路线已提交（{grade}，预计总巡航时间 {eval.totalTime:0.0}s）。{gradeDialog}";
+        if (gradeVoice != null && !string.IsNullOrWhiteSpace(gradeVoice.dialogText))
+            return $"路线已提交（{grade}，预计总巡航时间 {eval.totalTime:0.0}s）。{gradeVoice.dialogText.Trim()}";
         return $"路线已提交（{grade}，预计总巡航时间 {eval.totalTime:0.0}s）。";
     }
 
@@ -866,7 +865,7 @@ public class RoutePlanningMiniGameController : MonoBehaviour
         if (autocruiseController != null)
             autocruiseController.OnAutocruiseRouteCompleted -= OnAutocruiseRouteCompletedPlayArrivalClip;
 
-        if (systemDialog != null && !string.IsNullOrWhiteSpace(arrivalDialogText))
+        if (ResolveSystemDialogPresentation() != null && !string.IsNullOrWhiteSpace(arrivalDialogText))
             StartCoroutine(PlayNarrationOrDialogCoroutine(arrivalVoiceClip, arrivalDialogText));
         else if (arrivalVoiceClip != null && routeNarrationAudio != null)
             routeNarrationAudio.PlayOneShot(arrivalVoiceClip, routeNarrationVolume);

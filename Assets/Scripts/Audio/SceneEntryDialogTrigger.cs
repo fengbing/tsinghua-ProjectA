@@ -11,7 +11,7 @@ public class SceneEntryDialogTrigger : MonoBehaviour
     static readonly HashSet<string> PlayedKeys = new();
 
     [Header("Dialog")]
-    [SerializeField] SystemDialogController systemDialog;
+    [SerializeField] Component systemDialog;
     [TextArea(2, 5)]
     [SerializeField] string enterText = "系统提示：欢迎进入场景。";
     [SerializeField] AudioClip enterVoice;
@@ -67,16 +67,17 @@ public class SceneEntryDialogTrigger : MonoBehaviour
 
     void PlayDialog()
     {
-        if (systemDialog == null)
-            systemDialog = FindObjectOfType<SystemDialogController>();
-        if (systemDialog == null)
+        ISystemDialogPresentation dlg = systemDialog is ISystemDialogPresentation p
+            ? p
+            : SystemDialogLocator.FindPresentation();
+        if (dlg == null)
             return;
 
         List<SystemDialogLine> linesToPlay = BuildLinesToPlay();
         if (linesToPlay.Count == 0)
             return;
-        systemDialog.ApplyTextStyle(enterFont, enterFontSize);
-        systemDialog.PlayDialog(linesToPlay);
+        dlg.ApplyTextStyle(enterFont, enterFontSize);
+        dlg.PlayDialog(linesToPlay);
 
         if (oncePerGameRun && !string.IsNullOrWhiteSpace(GetKey()))
             PlayedKeys.Add(GetKey());
