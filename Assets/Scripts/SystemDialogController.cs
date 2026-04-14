@@ -32,6 +32,8 @@ public class SystemDialogController : MonoBehaviour
     [SerializeField] Color textColor = Color.white;
     [SerializeField] int fontSize = 36;
     [SerializeField] TMP_FontAsset fontAsset;
+    [Tooltip("主字体缺字时的后备字体列表（建议放中文字体）")]
+    [SerializeField] List<TMP_FontAsset> fallbackFontAssets = new();
     [SerializeField] bool useUnscaledTime = true;
     [Header("Complete Behavior")]
     [SerializeField] bool fadeOutAfterComplete = true;
@@ -262,6 +264,7 @@ public class SystemDialogController : MonoBehaviour
             dialogText.font = overrideFont;
         if (overrideFontSize > 0)
             dialogText.fontSize = overrideFontSize;
+        ApplyFallbackFontsToCurrentFont();
     }
 
     IEnumerator PlayDialogRoutine(IList<SystemDialogLine> lines)
@@ -539,6 +542,7 @@ public class SystemDialogController : MonoBehaviour
         dialogText.alignment = TextAlignmentOptions.Center;
         if (fontAsset != null)
             dialogText.font = fontAsset;
+        ApplyFallbackFontsToCurrentFont();
         dialogText.color = textColor;
         dialogText.fontSize = fontSize;
         dialogText.enableWordWrapping = true;
@@ -553,6 +557,51 @@ public class SystemDialogController : MonoBehaviour
     {
         var go = GameObject.Find("DeliveryPromptsUI");
         return go != null ? go.transform : null;
+    }
+
+    void ApplyFallbackFontsToCurrentFont()
+    {
+        if (dialogText == null || dialogText.font == null || fallbackFontAssets == null || fallbackFontAssets.Count == 0)
+        {
+            MergeTmpGlobalFallbacks();
+            return;
+        }
+
+        if (dialogText.font.fallbackFontAssetTable == null)
+            dialogText.font.fallbackFontAssetTable = new List<TMP_FontAsset>();
+
+        for (int i = 0; i < fallbackFontAssets.Count; i++)
+        {
+            TMP_FontAsset fallback = fallbackFontAssets[i];
+            if (fallback == null || fallback == dialogText.font)
+                continue;
+            if (!dialogText.font.fallbackFontAssetTable.Contains(fallback))
+                dialogText.font.fallbackFontAssetTable.Add(fallback);
+        }
+
+        MergeTmpGlobalFallbacks();
+    }
+
+    void MergeTmpGlobalFallbacks()
+    {
+        if (dialogText == null || dialogText.font == null)
+            return;
+
+        var globalFallbacks = TMP_Settings.fallbackFontAssets;
+        if (globalFallbacks == null || globalFallbacks.Count == 0)
+            return;
+
+        if (dialogText.font.fallbackFontAssetTable == null)
+            dialogText.font.fallbackFontAssetTable = new List<TMP_FontAsset>();
+
+        for (int i = 0; i < globalFallbacks.Count; i++)
+        {
+            TMP_FontAsset fallback = globalFallbacks[i];
+            if (fallback == null || fallback == dialogText.font)
+                continue;
+            if (!dialogText.font.fallbackFontAssetTable.Contains(fallback))
+                dialogText.font.fallbackFontAssetTable.Add(fallback);
+        }
     }
 
     IEnumerator FadeOutPanel(float duration)
