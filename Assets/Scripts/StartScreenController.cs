@@ -33,6 +33,10 @@ public class StartScreenController : MonoBehaviour
     [Tooltip("跳转目标场景名（旁白播放完毕后跳转至此）")]
     [SerializeField] string targetSceneName = "meau";
 
+    [Header("视频 & 音频停止控制")]
+    [Tooltip("与视频同步停止的 AudioSource（如开场语音/特效音）")]
+    [SerializeField] AudioSource syncStopAudioSource;
+
     [Header("旁白1")]
     [TextArea(2, 5)]
     [SerializeField] string narrationText1 = "旁白1文字";
@@ -163,9 +167,11 @@ public class StartScreenController : MonoBehaviour
         if (startScreenPanel != null && startScreenPanel != gameObject)
             startScreenPanel.SetActive(false);
 
-        // 6. 停止视频
+        // 6. 停止视频和同步音频
         if (startVideoPlayer != null)
             startVideoPlayer.Stop();
+        if (syncStopAudioSource != null && syncStopAudioSource.isPlaying)
+            syncStopAudioSource.Stop();
 
         // 7. 播放旁白1
         yield return StartCoroutine(PlayNarrationLine(narrationText1, narrationAudio1, narrationVolume1));

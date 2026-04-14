@@ -76,6 +76,29 @@ public class SystemDialogController : MonoBehaviour
     public bool IsShowingSubtitle => _isShowingSubtitle;
     public float SubtitleCharacterInterval => subtitleCharacterInterval > 0f ? subtitleCharacterInterval : 0.04f;
 
+    /// <summary>
+    /// 播放单句对话（带配音和打字速度控制）。
+    /// 等效于 PlayDialog(new List&lt;SystemDialogLine&gt; { new() { text, voiceClip, characterInterval } })，
+    /// 但写法更简洁。
+    /// </summary>
+    /// <param name="text">对话文本</param>
+    /// <param name="voice">配音 AudioClip，可为 null</param>
+    /// <param name="characterInterval">每字间隔秒数；&lt;= 0 时默认 0.04s</param>
+    public void PlaySingleLine(string text, AudioClip voice, float characterInterval = 0f)
+    {
+        float ch = characterInterval > 0f ? characterInterval : 0.04f;
+        PlayDialog(new SystemDialogLine { text = text ?? string.Empty, voiceClip = voice, characterInterval = ch }.ToSingletonList());
+    }
+
+    /// <summary>
+    /// 在协程中等待当前对话（含淡出）完全结束后再继续。
+    /// 调用方式：yield return systemDialog.WaitUntilDialogIdle();
+    /// </summary>
+    public IEnumerator WaitUntilDialogIdle()
+    {
+        yield return new WaitUntil(() => !_isPlaying);
+    }
+
     /// <summary>直接设置 _isPlaying 状态，不停止任何协程（用于阶段切换时重置状态）</summary>
     public void SetIsPlaying(bool value) => _isPlaying = value;
 

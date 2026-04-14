@@ -241,7 +241,7 @@ public class DeliveryPhaseManager : MonoBehaviour
             case DeliveryState.BalconyOpened:
                 if (targetBalconyOutline != null)
                     targetBalconyOutline.SetOutlineEnabled(false);
-                ShowPrompt("请将物品投递到阳台中");
+                ShowPrompt("请按F键投递快递");
                 PlayBalconyOpenSound();
                 if (useBackupScenePositionLerp)
                     StartCoroutine(LerpBalconyZ(-0.742f, -0.075f, 3f));

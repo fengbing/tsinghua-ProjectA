@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -22,5 +23,10 @@ public static class SystemDialogCue
             return 0.04f;
         float totalDuration = voice.length + Mathf.Max(0f, extraSecondsAfterVoice);
         return Mathf.Max(0.005f, totalDuration / text.Length);
+    }
+
+    internal static List<SystemDialogLine> ToSingletonList(this SystemDialogLine line)
+    {
+        return new List<SystemDialogLine> { line };
     }
 }

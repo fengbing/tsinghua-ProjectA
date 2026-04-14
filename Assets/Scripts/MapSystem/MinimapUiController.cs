@@ -73,6 +73,7 @@ public class MinimapUiController : MonoBehaviour
     private bool _uiBuilt;
     private bool _runtimeConfigInstance;
     private bool _mapVisible;
+    private bool _suppressedByExternalReason;
 
     private void Awake()
     {
@@ -112,8 +113,8 @@ public class MinimapUiController : MonoBehaviour
 
     private void ApplyVisibility(bool visible)
     {
-        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap);
-        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen);
+        if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap && !_suppressedByExternalReason);
+        if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen && !_suppressedByExternalReason);
     }
 
     private void OnValidate()
@@ -400,9 +401,20 @@ public class MinimapUiController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 外部原因（如路线规划模式）强制隐藏地图。
+    /// 与 ShowMap/HideMap 的用户可见开关独立，互不影响。
+    /// true = 隐藏（外部原因压制）；false = 恢复（撤销压制，地图恢复原状态）。
+    /// </summary>
+    public void SetMapSuppressedForExternalReason(bool suppressed)
+    {
+        _suppressedByExternalReason = suppressed;
+        ApplyVisibility(_mapVisible);
+    }
+
     private void ApplyMode()
     {
-        bool visible = _mapVisible;
+        bool visible = _mapVisible && !_suppressedByExternalReason;
         if (miniRoot != null) miniRoot.gameObject.SetActive(visible && mode == MapViewMode.Minimap);
         if (fullRoot != null) fullRoot.gameObject.SetActive(visible && mode == MapViewMode.Fullscreen);
     }
