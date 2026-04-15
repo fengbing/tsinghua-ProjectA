@@ -73,6 +73,17 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
     [Header("Windows (exactly 3)")]
     [SerializeField] List<FacadeRescueWindowSlot> windows = new List<FacadeRescueWindowSlot>();
+    [Header("Choice Indicators")]
+    [Tooltip("进入 choice 时显示的提示图 xuanqu1；离开 choice 时自动隐藏。")]
+    [SerializeField] GameObject xuanqu1Indicator;
+    [Tooltip("进入 choice 时显示的提示图 xuanqu2；离开 choice 时自动隐藏。")]
+    [SerializeField] GameObject xuanqu2Indicator;
+    [Tooltip("xuanqu 提示图透明度最低值（越小越淡）。")]
+    [SerializeField, Range(0f, 1f)] float choiceIndicatorMinAlpha = 0.35f;
+    [Tooltip("xuanqu 提示图透明度最高值（越大越深）。")]
+    [SerializeField, Range(0f, 1f)] float choiceIndicatorMaxAlpha = 1f;
+    [Tooltip("xuanqu 提示图一次「深->淡」或「淡->深」的时长（秒）。")]
+    [SerializeField, Min(0.05f)] float choiceIndicatorFadeHalfCycleSeconds = 0.45f;
 
     [Header("Audio")]
     [SerializeField] AudioClip slideChoiceClip;
@@ -328,6 +339,8 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     bool _elevatorMoveSoundPlaying;
     AudioClip _elevatorRestoreClip;
     bool _elevatorRestoreLoop;
+    Coroutine _xuanqu1PulseCo;
+    Coroutine _xuanqu2PulseCo;
 
     /// <summary>窗0第一人选了左或右滑杆时置位；全员完成后走 fail1 流程。</summary>
     bool _fail1PendingRestart;
@@ -526,14 +539,28 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         return windowIndex == 0 && personIndex >= 0 && personIndex <= 1;
     }
 
+    static bool ShouldDisableLeftSlideButton(int windowIndex, int personIndex)
+    {
+        return windowIndex == 1 && personIndex == 1;
+    }
+
     void ApplyChoiceButtonRuleForWindowPerson(int windowIndex, int personIndex)
     {
         if (windowIndex < 0 || windowIndex >= windows.Count)
             return;
 
         var w = windows[windowIndex];
+        // 先清掉历史状态：避免上一个人/窗口留下的 interactable=false 泄漏到当前人。
+        if (w.choicesPanel != null)
+        {
+            foreach (var b in w.choicesPanel.GetComponentsInChildren<Button>(true))
+            {
+                if (b != null)
+                    b.interactable = true;
+            }
+        }
         if (w.slideLeftButton != null)
-            w.slideLeftButton.interactable = true;
+            w.slideLeftButton.interactable = !ShouldDisableLeftSlideButton(windowIndex, personIndex);
         if (w.elevatorButton != null)
             w.elevatorButton.interactable = true;
         if (w.slideRightButton != null)
@@ -929,6 +956,8 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
     void SetChoicesVisible(FacadeRescueWindowSlot w, bool on)
     {
+        SetChoiceIndicatorsVisible(on);
+
         if (w == null)
             return;
         if (w.choicesPanel != null)
@@ -943,6 +972,94 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
             w.elevatorButton.gameObject.SetActive(on);
         if (w.slideRightButton != null)
             w.slideRightButton.gameObject.SetActive(on);
+    }
+
+    void EnsureChoiceIndicatorsResolved()
+    {
+        if (xuanqu1Indicator == null)
+        {
+            Transform t = FindDescendantByNameRecursive(transform, "xuanqu1");
+            if (t != null)
+                xuanqu1Indicator = t.gameObject;
+        }
+
+        if (xuanqu2Indicator == null)
+        {
+            Transform t = FindDescendantByNameRecursive(transform, "xuanqu2");
+            if (t != null)
+                xuanqu2Indicator = t.gameObject;
+        }
+    }
+
+    void SetChoiceIndicatorsVisible(bool on)
+    {
+        EnsureChoiceIndicatorsResolved();
+        SetChoiceIndicatorVisibleAndPulse(xuanqu1Indicator, on, ref _xuanqu1PulseCo);
+        SetChoiceIndicatorVisibleAndPulse(xuanqu2Indicator, on, ref _xuanqu2PulseCo);
+    }
+
+    void SetChoiceIndicatorVisibleAndPulse(GameObject go, bool on, ref Coroutine pulseCo)
+    {
+        if (go == null)
+            return;
+
+        if (on)
+        {
+            go.SetActive(true);
+            if (pulseCo == null)
+                pulseCo = StartCoroutine(CoPulseChoiceIndicatorAlpha(go));
+        }
+        else
+        {
+            if (pulseCo != null)
+            {
+                StopCoroutine(pulseCo);
+                pulseCo = null;
+            }
+            SetChoiceIndicatorAlpha(go, choiceIndicatorMaxAlpha);
+            go.SetActive(false);
+        }
+    }
+
+    IEnumerator CoPulseChoiceIndicatorAlpha(GameObject go)
+    {
+        if (go == null)
+            yield break;
+
+        float minA = Mathf.Clamp01(choiceIndicatorMinAlpha);
+        float maxA = Mathf.Clamp01(choiceIndicatorMaxAlpha);
+        if (maxA < minA)
+        {
+            float tSwap = maxA;
+            maxA = minA;
+            minA = tSwap;
+        }
+
+        float half = Mathf.Max(0.05f, choiceIndicatorFadeHalfCycleSeconds);
+        float t = 0f;
+        while (go != null && go.activeInHierarchy)
+        {
+            t += _sessionUsesUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
+            float ping = Mathf.PingPong(t / half, 1f);
+            float alpha = Mathf.Lerp(maxA, minA, ping);
+            SetChoiceIndicatorAlpha(go, alpha);
+            yield return null;
+        }
+    }
+
+    static void SetChoiceIndicatorAlpha(GameObject go, float alpha)
+    {
+        if (go == null)
+            return;
+        float a = Mathf.Clamp01(alpha);
+        foreach (var g in go.GetComponentsInChildren<Graphic>(true))
+        {
+            if (g == null)
+                continue;
+            Color c = g.color;
+            c.a = a;
+            g.color = c;
+        }
     }
 
     RectTransform ResolveOverlayHudLayoutReference()
