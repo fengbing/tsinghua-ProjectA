@@ -33,7 +33,7 @@ public class WindowFireMission : MonoBehaviour
     [Header("UI")]
     [SerializeField] WindowFireDualPromptHud hud;
     [Tooltip("留空则在场景里查找；灭火收尾旁白结束后用于系统提示（黑底 + 逐字 + 音频）。")]
-    [SerializeField] SystemDialogController systemDialog;
+    [SerializeField] SystemDialogController2 systemDialog;
 
     [Header("VFX (fires)")]
     [Tooltip("与 WindowFireExtinguishZone 的 fireIndex 一一对应。")]
@@ -77,7 +77,7 @@ public class WindowFireMission : MonoBehaviour
     [Tooltip("系统对话框逐字显示的正文；可与下一条语音同步")]
     [TextArea(2, 6)]
     [SerializeField] string postMissionSystemPromptText;
-    [Tooltip("系统提示句的语音（由 SystemDialogController 播放）")]
+    [Tooltip("系统提示句的语音（由 SystemDialogController2 播放）")]
     [SerializeField] AudioClip postMissionSystemPromptClip;
     [Tooltip("≤0 时用对话框默认间隔（约 0.04s/字）")]
     [SerializeField] float postMissionSystemPromptCharInterval;
@@ -703,11 +703,11 @@ public class WindowFireMission : MonoBehaviour
         if (!hasText && !hasVoice)
             yield break;
 
-        var dlg = systemDialog != null ? systemDialog : FindObjectOfType<SystemDialogController>();
+        var dlg = systemDialog != null ? systemDialog : FindObjectOfType<SystemDialogController2>();
         if (dlg == null)
         {
             Debug.LogWarning(
-                $"{nameof(WindowFireMission)}: 已配置系统提示文案或音频，但场景中无 {nameof(SystemDialogController)}。",
+                $"{nameof(WindowFireMission)}: 已配置系统提示文案或音频，但场景中无 {nameof(SystemDialogController2)}。",
                 this);
             yield break;
         }

@@ -104,12 +104,12 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     [SerializeField] AudioSource completionVoiceSource;
     [Tooltip("第一段视频结束后显示的黑屏根物体（一般为全屏黑底）；系统提示期间保持显示。")]
     [SerializeField] GameObject successBlackScreenRoot;
-    [Tooltip("黑屏阶段系统提示控制器；留空则在场景中查找 SystemDialogController。")]
-    [SerializeField] SystemDialogController successBlackScreenDialog;
+    [Tooltip("黑屏阶段系统提示控制器；留空则在场景中查找 SystemDialogController2。")]
+    [SerializeField] SystemDialogController2 successBlackScreenDialog;
     [TextArea(2, 6)]
     [SerializeField] string successBlackScreenPromptText;
     [SerializeField] AudioClip successBlackScreenPromptVoice;
-    [Tooltip("<=0 使用 SystemDialogController 默认打字速度")]
+    [Tooltip("<=0 使用 SystemDialogController2 默认打字速度")]
     [SerializeField] float successBlackScreenPromptCharInterval;
     [Tooltip("系统提示结束后播放的第二段全屏视频；留空则跳过")]
     [SerializeField] VideoPlayer successSecondVideoPlayer;
@@ -139,15 +139,15 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     [SerializeField] Button successContinueButton;
 
     [Header("开场系统提示（进入小游戏后）")]
-    [Tooltip("进入立面救援后先播两段黑底打字提示；留空则场景里查找 SystemDialogController")]
-    [SerializeField] SystemDialogController preSessionSystemDialog;
+    [Tooltip("进入立面救援后先播两段黑底打字提示；留空则场景里查找 SystemDialogController2")]
+    [SerializeField] SystemDialogController2 preSessionSystemDialog;
     [TextArea(2, 6)]
     [SerializeField] string preSessionPromptText1;
     [SerializeField] AudioClip preSessionPromptVoice1;
     [TextArea(2, 6)]
     [SerializeField] string preSessionPromptText2;
     [SerializeField] AudioClip preSessionPromptVoice2;
-    [Tooltip("<=0 时使用 SystemDialogController 默认打字速度")]
+    [Tooltip("<=0 时使用 SystemDialogController2 默认打字速度")]
     [SerializeField] float preSessionPromptCharInterval;
 
     [Header("Cursor")]
@@ -1439,11 +1439,11 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
         var dlg = successBlackScreenDialog != null
             ? successBlackScreenDialog
-            : FindFirstObjectByType<SystemDialogController>();
+            : FindFirstObjectByType<SystemDialogController2>();
         if (dlg == null)
         {
             Debug.LogWarning(
-                $"{nameof(FacadeRescueMiniGameController)}: 已配置黑屏系统提示但未找到 {nameof(SystemDialogController)}，将跳过该提示。",
+                $"{nameof(FacadeRescueMiniGameController)}: 已配置黑屏系统提示但未找到 {nameof(SystemDialogController2)}，将跳过该提示。",
                 this);
             if (successBlackScreenRoot != null)
                 successBlackScreenRoot.SetActive(false);
@@ -1950,11 +1950,11 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
 
         var dlg = preSessionSystemDialog != null
             ? preSessionSystemDialog
-            : FindFirstObjectByType<SystemDialogController>();
+            : FindFirstObjectByType<SystemDialogController2>();
         if (dlg == null)
         {
             Debug.LogWarning(
-                $"{nameof(FacadeRescueMiniGameController)}: 已配置开场系统提示但未找到 {nameof(SystemDialogController)}，将直接开始救援流程。",
+                $"{nameof(FacadeRescueMiniGameController)}: 已配置开场系统提示但未找到 {nameof(SystemDialogController2)}，将直接开始救援流程。",
                 this);
             yield break;
         }
