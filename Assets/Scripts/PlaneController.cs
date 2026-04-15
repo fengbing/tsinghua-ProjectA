@@ -24,7 +24,7 @@ public class PlaneController : MonoBehaviour
     [Tooltip("松开方向键后延迟锁定悬停（秒），用于保留一点惯性滑行")]
     [SerializeField, Range(0f, 1f)] float idleHoverLockDelay = 0.09f;
     [Tooltip("松开输入后的线性减速度（m/s^2）")]
-    [SerializeField, Range(0.5f, 40f)] float idleLinearDeceleration = 8f;
+    [SerializeField, Range(0.5f, 40f)] float idleLinearDeceleration = 20f;
     [Tooltip("idle 时的低速 drag（速度低时会趋近这个值）")]
     [SerializeField, Range(0f, 2f)] float idleDragAtLowSpeed = 0.45f;
     [Tooltip("idle 时的高速 drag（速度高时会趋近这个值，建议小于低速 drag）")]

@@ -120,7 +120,7 @@ public class PlaneGameNarrativeDirector : MonoBehaviour
     [Tooltip("场景开始后延迟 N 秒再开启包裹损坏检测")]
     [SerializeField] float brokenDetectionDelay = 5f;
     [Tooltip("包裹下落超过此值（米）判定为损坏")]
-    [SerializeField] float brokenFallThreshold = 2f;
+    [SerializeField] float brokenFallThreshold = 8f;
 
     bool _proximityCuePlayed;
     bool _wasInsideProximity;
