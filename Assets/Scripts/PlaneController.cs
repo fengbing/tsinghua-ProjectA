@@ -86,6 +86,7 @@ public class PlaneController : MonoBehaviour
     Vector3 _autocruiseAxesRaw;
     bool _boostEnabled = true;
     bool _verticalEnabled = true;
+    bool _inertiaEnabled = true;
     float _planarBoostRamp01;
     bool _lastPlanarMovementActive;
     float _targetAltitude;
@@ -302,7 +303,7 @@ public class PlaneController : MonoBehaviour
 
                     // version1：holding 时直接对 velocity 做 Lerp 平滑
                     Vector3 currentVelocityWorld = _rb.velocity;
-                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
+                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, ResolveVelocityBlendT(t));
 
 ClampHoldingVelocity:
                     float v = _rb.velocity.magnitude;
@@ -330,7 +331,7 @@ ClampHoldingVelocity:
                     float effectiveMass = Mathf.Max(0.1f, _rb.mass);
                     float smoothing = accelToUse / effectiveMass;
                     float t = 1f - Mathf.Exp(-smoothing * Time.fixedDeltaTime);
-                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
+                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, ResolveVelocityBlendT(t));
 
 ClampFreeVelocity:
                     float v = _rb.velocity.magnitude;
@@ -357,7 +358,7 @@ ClampFreeVelocity:
                     float accelToUse = acceleration;
                     float smoothing = accelToUse / effectiveMass;
                     float t = 1f - Mathf.Exp(-smoothing * Time.fixedDeltaTime);
-                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, t);
+                    _rb.velocity = Vector3.Lerp(currentVelocityWorld, desiredVelocityWorld, ResolveVelocityBlendT(t));
                 }
 
                 float v = _rb.velocity.magnitude;
@@ -431,6 +432,11 @@ ClampFreeVelocity:
         return Mathf.Lerp(maxSpeed, peak, _planarBoostRamp01);
     }
 
+    float ResolveVelocityBlendT(float normalBlendT)
+    {
+        return _inertiaEnabled ? normalBlendT : 1f;
+    }
+
     void LateUpdate()
     {
         if (driveSpeedSideBlur)
@@ -476,6 +482,12 @@ ClampFreeVelocity:
     public void SetAutocruiseAxes(Vector3 localAxesRaw)
     {
         _autocruiseAxesRaw = localAxesRaw;
+    }
+
+    /// <summary>是否启用速度惯性平滑（关闭后速度响应更直接）。</summary>
+    public void SetInertiaEnabled(bool enabled)
+    {
+        _inertiaEnabled = enabled;
     }
 
     /// <summary>输入是否启用。</summary>

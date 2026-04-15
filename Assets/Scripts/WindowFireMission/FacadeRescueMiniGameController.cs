@@ -122,7 +122,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     [Tooltip("每段黑场过渡时长（秒）。")]
     [SerializeField] float successTransitionBlackSeconds = 0.2f;
     [Tooltip("点击 success 按钮后、第一段视频开始前额外保持纯黑（秒）。")]
-    [SerializeField] float successFirstVideoPreBlackHoldSeconds = 0.35f;
+    [SerializeField] float successFirstVideoPreBlackHoldSeconds = 0.7f;
     [Tooltip("黑屏打字结束后、第二段视频画面出现前额外保持纯黑（秒）；仅影响第二段视频前。")]
     [SerializeField] float successSecondVideoPreBlackHoldSeconds = 0.45f;
     [Tooltip("第二段视频结束后显示的全屏图片页根物体")]
@@ -499,7 +499,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     {
         if (windowIndex == 0 && personIndex == 1)
             return true;
-        if (windowIndex == 1 && personIndex >= 0 && personIndex <= 1)
+        if (windowIndex == 1 && personIndex == 0)
             return true;
         return false;
     }
@@ -520,6 +520,25 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
     }
 
     bool IsWrongFeedbackBlocking() => _wrong1BlockingWindow >= 0 || _wrong2BlockingWindow >= 0;
+
+    static bool ShouldDisableRightSlideButton(int windowIndex, int personIndex)
+    {
+        return windowIndex == 0 && personIndex >= 0 && personIndex <= 1;
+    }
+
+    void ApplyChoiceButtonRuleForWindowPerson(int windowIndex, int personIndex)
+    {
+        if (windowIndex < 0 || windowIndex >= windows.Count)
+            return;
+
+        var w = windows[windowIndex];
+        if (w.slideLeftButton != null)
+            w.slideLeftButton.interactable = true;
+        if (w.elevatorButton != null)
+            w.elevatorButton.interactable = true;
+        if (w.slideRightButton != null)
+            w.slideRightButton.interactable = !ShouldDisableRightSlideButton(windowIndex, personIndex);
+    }
 
     bool IsRescueInteractionBlocked() =>
         IsWrongFeedbackBlocking() || _fail2TimeExpired || _successFlowActive;
@@ -1195,6 +1214,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         if (det != null)
             det.SetActive(true);
         SetChoicesVisible(w, true);
+        ApplyChoiceButtonRuleForWindowPerson(idx, p);
     }
 
     void WireWrong2DismissButton()
@@ -1228,6 +1248,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         if (det != null)
             det.SetActive(true);
         SetChoicesVisible(w, true);
+        ApplyChoiceButtonRuleForWindowPerson(idx, p);
     }
 
     void WireFail1RestartButton()
@@ -2148,6 +2169,7 @@ public class FacadeRescueMiniGameController : MonoBehaviour, IFacadeRescueMiniga
         if (details != null)
             details.SetActive(false);
         SetChoicesVisible(w, true);
+        ApplyChoiceButtonRuleForWindowPerson(index, p);
         if (w.windowButton != null)
         {
             w.windowButton.gameObject.SetActive(true);
