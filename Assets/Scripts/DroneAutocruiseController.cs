@@ -40,6 +40,8 @@ public class DroneAutocruiseController : MonoBehaviour
 
     [Tooltip("巡航开始时禁用的物体（如空气墙）。留空则在 Awake 时按名称 air 在场景中查找（含未激活）。")]
     [SerializeField] GameObject airBarrierRoot;
+    [Tooltip("巡航期间临时关闭无人机惯性平滑，到达/退出巡航后恢复。")]
+    [SerializeField] bool disableInertiaDuringCruise = true;
     [Header("巡航到达后视角")]
     [Tooltip("非循环巡航到达终点后，是否自动将视角转向指定目标。")]
     [SerializeField] bool autoLookAtOnRouteCompleted = true;
@@ -135,6 +137,8 @@ public class DroneAutocruiseController : MonoBehaviour
         {
             planeController.SetInputEnabled(false);
             planeController.SetAutocruiseActive(true);
+            if (disableInertiaDuringCruise)
+                planeController.SetInertiaEnabled(false);
         }
 
         if (airBarrierRoot != null)
@@ -249,6 +253,7 @@ public class DroneAutocruiseController : MonoBehaviour
         if (planeController != null)
         {
             planeController.SetAutocruiseActive(false);
+            planeController.SetInertiaEnabled(true);
             planeController.SetInputEnabled(_inputEnabledBeforeCruise);
         }
 

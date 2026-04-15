@@ -95,6 +95,7 @@ public class WindowFireMission : MonoBehaviour
     [Header("Audio — 喷水 (循环，仅交互后)")]
     [SerializeField] AudioClip waterSprayLoop;
     [SerializeField] AudioSource waterAudioSource;
+    [SerializeField, Range(0f, 1f)] float waterSprayVolume = 0.75f;
 
     [Header("收尾")]
     [Tooltip("停水后到播放 narrationAfterFireOut 之间的间隔（秒）")]
@@ -337,6 +338,7 @@ public class WindowFireMission : MonoBehaviour
             waterAudioSource.playOnAwake = false;
             waterAudioSource.loop = true;
             waterAudioSource.spatialBlend = 0f;
+            waterAudioSource.volume = Mathf.Clamp01(waterSprayVolume);
         }
     }
 
@@ -598,6 +600,7 @@ public class WindowFireMission : MonoBehaviour
         {
             waterAudioSource.clip = waterSprayLoop;
             waterAudioSource.loop = true;
+            waterAudioSource.volume = Mathf.Clamp01(waterSprayVolume);
             waterAudioSource.Play();
         }
 
