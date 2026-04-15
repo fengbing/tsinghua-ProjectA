@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using UnityEngine;
 using System.Collections.Generic;
 
@@ -39,6 +40,11 @@ public class DroneAutocruiseController : MonoBehaviour
 
     [Tooltip("巡航开始时禁用的物体（如空气墙）。留空则在 Awake 时按名称 air 在场景中查找（含未激活）。")]
     [SerializeField] GameObject airBarrierRoot;
+    [Header("巡航到达后视角")]
+    [Tooltip("非循环巡航到达终点后，是否自动将视角转向指定目标。")]
+    [SerializeField] bool autoLookAtOnRouteCompleted = true;
+    [Tooltip("巡航到达后视角对准的目标物体。")]
+    [SerializeField] Transform routeCompletedLookTarget;
 
     Rigidbody _rb;
     bool _cruising;
@@ -123,6 +129,7 @@ public class DroneAutocruiseController : MonoBehaviour
         _inputEnabledBeforeCruise = planeController != null && planeController.IsInputEnabled;
         _waypointIndex = 0;
         _cruising = true;
+        CancelRouteCompletedLookAssist();
 
         if (planeController != null)
         {
@@ -226,16 +233,18 @@ public class DroneAutocruiseController : MonoBehaviour
     void EndCruiseAfterRouteCompleted()
     {
         OnAutocruiseRouteCompleted?.Invoke();
-        EndCruise();
+        bool keepLookAssist = TryApplyRouteCompletedLookAssist();
+        EndCruise(clearLookAssist: !keepLookAssist);
     }
 
-    void EndCruise()
+    void EndCruise(bool clearLookAssist = true)
     {
         if (!_cruising)
             return;
         _cruising = false;
 
-        followCamera?.SetAutocruiseLookAssist(false, Vector3.zero);
+        if (clearLookAssist)
+            CancelRouteCompletedLookAssist();
 
         if (planeController != null)
         {
@@ -244,6 +253,20 @@ public class DroneAutocruiseController : MonoBehaviour
         }
 
         OnCruiseStopped?.Invoke();
+    }
+
+    bool TryApplyRouteCompletedLookAssist()
+    {
+        if (!autoLookAtOnRouteCompleted || followCamera == null || routeCompletedLookTarget == null)
+            return false;
+
+        followCamera.SetAutocruiseLookAssistUntilMouseMove(routeCompletedLookTarget.position);
+        return true;
+    }
+
+    void CancelRouteCompletedLookAssist()
+    {
+        followCamera?.SetAutocruiseLookAssist(false, Vector3.zero);
     }
 
     void FixedUpdate()

@@ -47,6 +47,7 @@ public class FollowCamera : MonoBehaviour
     bool _isPaused;
     bool _autocruiseLookAssist;
     Vector3 _autocruiseLookWorldPoint;
+    bool _autocruiseLookAssistUntilMouseMove;
     bool _didInitialSnap;
     float _suppressMouseInputUntilRealtime;
     float _startupDirectFollowUntilRealtime;
@@ -129,6 +130,11 @@ public class FollowCamera : MonoBehaviour
         bool suppressMouse = Time.realtimeSinceStartup < _suppressMouseInputUntilRealtime;
         float mouseX = (_mouseLookEnabled && !suppressMouse) ? Input.GetAxis("Mouse X") : 0f;
         float mouseY = (_mouseLookEnabled && !suppressMouse) ? Input.GetAxis("Mouse Y") : 0f;
+        if (_autocruiseLookAssistUntilMouseMove && (Mathf.Abs(mouseX) > 0.001f || Mathf.Abs(mouseY) > 0.001f))
+        {
+            _autocruiseLookAssistUntilMouseMove = false;
+            _autocruiseLookAssist = false;
+        }
         _yaw += mouseX * mouseSensitivity * Time.deltaTime;
         _pitch -= mouseY * mouseSensitivity * Time.deltaTime;
         _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
@@ -192,6 +198,16 @@ public class FollowCamera : MonoBehaviour
     {
         _autocruiseLookAssist = active;
         _autocruiseLookWorldPoint = worldPoint;
+        if (!active)
+            _autocruiseLookAssistUntilMouseMove = false;
+    }
+
+    /// <summary>自动巡航到达后：持续对准目标，直到玩家移动鼠标才解除。</summary>
+    public void SetAutocruiseLookAssistUntilMouseMove(Vector3 worldPoint)
+    {
+        _autocruiseLookWorldPoint = worldPoint;
+        _autocruiseLookAssist = true;
+        _autocruiseLookAssistUntilMouseMove = true;
     }
 
     /// <summary>暂停相机跟随（由 PlaneGameNarrativeDirector.PauseGame 调用）。</summary>
