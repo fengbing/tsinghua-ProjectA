@@ -56,11 +56,11 @@ public class StudyNarrativeController : MonoBehaviour
     [Tooltip("阶段完成后延迟播放下一段旁白的秒数（阶段 0/1/2 均适用）")]
     [SerializeField] private float phaseDelaySeconds = 0.5f;
     [Tooltip("第四段旁白播完后，等待跳转的秒数")]
-    [SerializeField] private float transitionDelaySeconds = 1f;
+    [SerializeField] private float transitionDelaySeconds = 0f;
     [Tooltip("黑幕淡入持续时间（秒）")]
     [SerializeField] private float blackScreenFadeDuration = 0.3f;
     [Tooltip("跳转目标场景名")]
-    [SerializeField] private string targetSceneName = "meau";
+    [SerializeField] private string targetSceneName = "menu 1";
 
     /// <summary>阶段 0 → 旁白2，阶段 1 → 旁白3，阶段 2 → 旁白4</summary>
     private static readonly string[] NarrationTexts   = { null, null, null, null };

@@ -242,6 +242,8 @@ MonoBehaviour:
   targetCanvas: {fileID: 0}
   dialogPanel: {fileID: 0}
   dialogText: {fileID: 0}
+  forceDedicatedOverlayCanvas: 1
+  dedicatedCanvasSortingOrder: 5000
   panelHeight: 50
   panelAnchorY: 0
   panelOffsetY: 90
@@ -1240,7 +1242,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0.000036658, y: -247}
+  m_AnchoredPosition: {x: 0.000036658, y: -296}
   m_SizeDelta: {x: 299.32446, y: 87.9599}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1744991596

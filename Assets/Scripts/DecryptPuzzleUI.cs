@@ -48,6 +48,7 @@ public class DecryptPuzzleUI : MonoBehaviour
 
     [Header("音效音量（0-1）")]
     [Range(0f, 1f)] [SerializeField] private float volumePanelOpen = 1f;
+    [Range(0f, 1f)] [SerializeField] private float volumeAmbient = 1f;
     [Range(0f, 1f)] [SerializeField] private float volumeDigitInput = 1f;
     [Range(0f, 1f)] [SerializeField] private float volumeError = 1f;
     [Range(0f, 1f)] [SerializeField] private float volumeSuccess = 1f;
@@ -160,6 +161,7 @@ public class DecryptPuzzleUI : MonoBehaviour
         {
             ambientAudioSource.clip = clipAmbient;
             ambientAudioSource.loop = true;
+            ambientAudioSource.volume = volumeAmbient;
             ambientAudioSource.Play();
         }
     }
