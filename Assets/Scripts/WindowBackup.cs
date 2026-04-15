@@ -16,7 +16,7 @@ public class WindowBackup : MonoBehaviour
     [Header("按钮（留空则自动查找子级 Button）")]
     [Tooltip("继续游戏按钮（点击后关闭菜单，恢复游戏）")]
     [SerializeField] private Button continueButton;
-    [Tooltip("跳转 menu 2 按钮")]
+    [Tooltip("跳转 menu 1 按钮")]
     [SerializeField] private Button menu2Button;
     [Tooltip("退出游戏按钮")]
     [SerializeField] private Button quitButton;
