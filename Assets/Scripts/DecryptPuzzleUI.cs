@@ -61,6 +61,9 @@ public class DecryptPuzzleUI : MonoBehaviour
     /// </summary>
     public event Action OnDecryptPuzzleSolved;
 
+    [Header("无人机声音")]
+    [SerializeField] private AudioSource droneAudioSource;
+
     private bool _planeInputWasEnabled = true;
     private PlaneController _planeController;
 
@@ -318,6 +321,13 @@ public class DecryptPuzzleUI : MonoBehaviour
             _planeController.SetInputEnabled(true);
             Debug.Log("[UI] Plane 输入已恢复");
         }
+
+        // 恢复无人机声音
+        if (droneAudioSource != null)
+        {
+            droneAudioSource.Play();
+            Debug.Log("[UI] 无人机声音已恢复");
+        }
     }
 
     void OnPuzzleFailed()
@@ -357,6 +367,10 @@ public class DecryptPuzzleUI : MonoBehaviour
                 _planeInputWasEnabled = _planeController.IsInputEnabled;
                 _planeController.SetInputEnabled(false);
             }
+
+            // 关闭无人机声音
+            if (droneAudioSource != null)
+                droneAudioSource.Stop();
 
             // 刷新显示
             UpdateCodeDisplay();

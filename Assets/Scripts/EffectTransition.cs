@@ -16,18 +16,22 @@ public class EffectTransition : MonoBehaviour
     [SerializeField] private StorageLoadingScreen loadingScreen;
 
     private bool _triggered;
+    private bool _effect1Shown;
 
     void Start()
     {
         Debug.Log("[EffectTransition] Start");
+        _triggered = false;
+        _effect1Shown = false;
         if (effect1 != null) effect1.SetActive(false);
         if (effect2 != null) effect2.SetActive(false);
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        Debug.Log($"[EffectTransition] OnTriggerEnter: triggered={_triggered}");
+        Debug.Log($"[EffectTransition] OnTriggerEnter: triggered={_triggered}, effect1Shown={_effect1Shown}");
         if (_triggered) return;
+        if (!_effect1Shown) return;
         var gripper = other.GetComponentInChildren<DroneGripper>();
         Debug.Log($"[EffectTransition] Gripper: {(gripper != null ? "找到" : "未找到")}");
         if (gripper == null) return;
@@ -54,6 +58,7 @@ public class EffectTransition : MonoBehaviour
     public void ShowEffect1()
     {
         Debug.Log("[EffectTransition] ShowEffect1");
+        _effect1Shown = true;
         if (effect1 != null)
             effect1.SetActive(true);
     }

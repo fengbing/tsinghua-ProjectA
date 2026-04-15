@@ -31,6 +31,9 @@ public class TutorialHud : MonoBehaviour
     TutorialPhaseConfig _currentConfig;
     bool _completed;
 
+    /// <summary>是否正在等待玩家打开第一人称（Phase 2 完成后）</summary>
+    bool _waitingForFirstPersonHint;
+
     void Update()
     {
         if (_feedbackTimer > 0f)
@@ -102,9 +105,12 @@ public class TutorialHud : MonoBehaviour
         if (!active && _currentConfig != null && !_completed)
         {
             // 旁白结束，恢复 hintText 显示（教学完成后不恢复阶段提示）
+            // 如果正在等待第一人称，显示对应提示
             if (hintText != null)
             {
-                hintText.text = _currentConfig.hintText;
+                hintText.text = _waitingForFirstPersonHint
+                    ? "请按 Alt 打开第一人称"
+                    : _currentConfig.hintText;
                 hintText.gameObject.SetActive(true);
             }
             if (hintBg != null) hintBg.gameObject.SetActive(true);
@@ -113,6 +119,18 @@ public class TutorialHud : MonoBehaviour
         {
             if (hintText != null) hintText.gameObject.SetActive(false);
             if (hintBg != null) hintBg.gameObject.SetActive(false);
+        }
+    }
+
+    /// <summary>设置是否正在等待玩家打开第一人称</summary>
+    public void SetWaitingForFirstPerson(bool value)
+    {
+        _waitingForFirstPersonHint = value;
+        if (value && hintText != null && !_narrationActive)
+        {
+            hintText.text = "请按 Alt 打开第一人称";
+            hintText.gameObject.SetActive(true);
+            if (hintBg != null) hintBg.gameObject.SetActive(true);
         }
     }
 
@@ -175,10 +193,16 @@ public class TutorialHud : MonoBehaviour
         _feedbackTimer = feedbackDisplayDuration;
     }
 
-    /// <summary>教学完成</summary>
+    /// <summary>教学完成：仅设置标记，由 ShowCompletedFirstPerson 正式显示完成 UI</summary>
     public void ShowCompleted()
     {
         _completed = true;
+        // 不再此处显示完成 UI，等待 ShowCompletedFirstPerson 调用
+    }
+
+    /// <summary>切换到第一人称后正式显示教学完成 UI</summary>
+    public void ShowCompletedFirstPerson()
+    {
         if (phaseNameText != null) phaseNameText.text = "教学完成!";
         if (hintText != null) hintText.text = "恭喜你掌握了所有操作!";
         if (progressText != null) progressText.gameObject.SetActive(false);

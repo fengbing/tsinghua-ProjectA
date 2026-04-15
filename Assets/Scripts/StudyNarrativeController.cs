@@ -52,6 +52,10 @@ public class StudyNarrativeController : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float narrationVolume4 = 1f;
 
+    [Header("第一人称提示（Phase 2 完成后、播放旁白4前显示）")]
+    [TextArea(2, 5)]
+    [SerializeField] private string firstPersonHintText = "请按 Alt 打开第一人称";
+
     [Header("时序参数")]
     [Tooltip("阶段完成后延迟播放下一段旁白的秒数（阶段 0/1/2 均适用）")]
     [SerializeField] private float phaseDelaySeconds = 0.5f;
@@ -86,6 +90,9 @@ public class StudyNarrativeController : MonoBehaviour
     private bool _phase0Triggered;
     private bool _phase1Triggered;
     private bool _phase2Triggered;
+
+    /// <summary>Phase 2 完成后，等待玩家打开第一人称的标记</summary>
+    private bool _waitingForFirstPerson;
 
     private Canvas _canvas;
 
@@ -227,6 +234,16 @@ public class StudyNarrativeController : MonoBehaviour
         int narrationIndex = phase + 1;
         float delay = phaseDelaySeconds; // 均为 0.5s
 
+        // Phase 2 需要玩家先打开第一人称，再播放旁白4
+        if (phase == 2)
+        {
+            _waitingForFirstPerson = true;
+            Debug.Log("[StudyNarrative] Phase 2 全部通过，等待玩家打开第一人称...");
+            tutorialHud?.SetWaitingForFirstPerson(true);
+            StartCoroutine(WaitForFirstPersonThenNarration());
+            return;
+        }
+
         StartCoroutine(DelayedNarrationAfterPhase(narrationIndex, delay, phase));
     }
 
@@ -316,6 +333,56 @@ public class StudyNarrativeController : MonoBehaviour
         // 通知 HUD 旁白结束：恢复 hintText 显示
         if (tutorialHud != null)
             tutorialHud.SetNarrationActive(false);
+    }
+
+    /// <summary>
+    /// Phase 2 完成后：等待玩家打开第一人称，再播放旁白4。
+    /// 每帧检测玩家是否按下了 Alt 键，或者 FollowCamera 已切换到第一人称模式。
+    /// </summary>
+    private IEnumerator WaitForFirstPersonThenNarration()
+    {
+        Debug.Log("[StudyNarrative] WaitForFirstPersonThenNarration 开始，等待第一人称模式...");
+
+        while (_waitingForFirstPerson)
+        {
+            // 玩家按下了 Alt 键，或者 FollowCamera 已切换到第一人称模式
+            bool altPressed = Input.GetKeyDown(KeyCode.LeftAlt) || Input.GetKeyDown(KeyCode.RightAlt);
+            bool inFirstPerson = IsFirstPersonMode();
+
+            if (altPressed || inFirstPerson)
+            {
+                Debug.Log($"[StudyNarrative] 检测到第一人称切换，altPressed={altPressed}，inFirstPerson={inFirstPerson}");
+                _waitingForFirstPerson = false;
+                tutorialHud?.SetWaitingForFirstPerson(false);
+                tutorialHud?.ShowCompletedFirstPerson();
+
+                // 延迟 0.5 秒后播放旁白4
+                yield return new WaitForSecondsRealtime(phaseDelaySeconds);
+                if (_allDone) yield break;
+
+                yield return PlayNarrationLine(3);
+                if (_allDone) yield break;
+
+                _currentListeningPhase++;
+                StartCoroutine(FinishWithTransition());
+                yield break;
+            }
+
+            yield return null;
+        }
+    }
+
+    /// <summary>
+    /// 通过反射读取 FollowCamera 的 _firstPersonMode 私有字段，
+    /// 与 GameUi.IsFirstPersonMode() 保持一致。
+    /// </summary>
+    private bool IsFirstPersonMode()
+    {
+        var cam = FindObjectOfType<FollowCamera>();
+        if (cam == null) return false;
+        var field = typeof(FollowCamera).GetField("_firstPersonMode",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        return field != null && (bool)field.GetValue(cam);
     }
 
     private IEnumerator FinishWithTransition()
