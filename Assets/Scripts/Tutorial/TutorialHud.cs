@@ -29,6 +29,7 @@ public class TutorialHud : MonoBehaviour
     float _feedbackTimer;
     bool _narrationActive;
     TutorialPhaseConfig _currentConfig;
+    bool _completed;
 
     void Update()
     {
@@ -98,9 +99,9 @@ public class TutorialHud : MonoBehaviour
     public void SetNarrationActive(bool active)
     {
         _narrationActive = active;
-        if (!active && _currentConfig != null)
+        if (!active && _currentConfig != null && !_completed)
         {
-            // 旁白结束，恢复 hintText 显示
+            // 旁白结束，恢复 hintText 显示（教学完成后不恢复阶段提示）
             if (hintText != null)
             {
                 hintText.text = _currentConfig.hintText;
@@ -177,6 +178,7 @@ public class TutorialHud : MonoBehaviour
     /// <summary>教学完成</summary>
     public void ShowCompleted()
     {
+        _completed = true;
         if (phaseNameText != null) phaseNameText.text = "教学完成!";
         if (hintText != null) hintText.text = "恭喜你掌握了所有操作!";
         if (progressText != null) progressText.gameObject.SetActive(false);

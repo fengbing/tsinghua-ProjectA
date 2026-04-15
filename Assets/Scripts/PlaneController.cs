@@ -15,14 +15,14 @@ public class PlaneController : MonoBehaviour
     [Tooltip("按住 A/D/W/S（水平面输入）时，从基础最大速度线性爬到峰值所需秒数")]
     [SerializeField] float boostRampDuration = 2f;
     [SerializeField] float acceleration = 28f;
-    [SerializeField] float braking = 52f;
-    [SerializeField] float drag = 1.2f;
+    [SerializeField] float braking = 5f;
+    [SerializeField] float drag = 5f;
     [SerializeField] float verticalSpeedMultiplier = 0.9f;
 
     [Header("松手保持高度")]
     [SerializeField] bool holdAltitudeWhenIdle = true;
     [Tooltip("松开方向键后延迟锁定悬停（秒），用于保留一点惯性滑行")]
-    [SerializeField, Range(0f, 1f)] float idleHoverLockDelay = 0.18f;
+    [SerializeField, Range(0f, 1f)] float idleHoverLockDelay = 0.09f;
     [Tooltip("松开输入后的线性减速度（m/s^2）")]
     [SerializeField, Range(0.5f, 40f)] float idleLinearDeceleration = 8f;
     [Tooltip("idle 时的低速 drag（速度低时会趋近这个值）")]

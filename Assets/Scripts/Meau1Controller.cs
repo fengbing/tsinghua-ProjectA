@@ -34,6 +34,9 @@ public class Meau1Controller : MonoBehaviour
 
     private void Start()
     {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+
         EnsureBlackScreenImage();
         EnsureStorageAudioSource();
 
